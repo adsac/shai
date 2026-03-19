@@ -99,7 +99,26 @@ function handleTouches(e) {
     if (e.type === "touchstart") jp._touch = true;
 }
 
+function goFullscreen() {
+    const el = document.documentElement;
+    const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (rfs) {
+        rfs.call(el).then(() => {
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock("landscape").catch(()=>{});
+            }
+            setTimeout(resizeCanvas, 300);
+        }).catch(()=>{});
+    }
+}
+
 if (isTouch) {
+    // First touch anywhere on document goes fullscreen
+    document.addEventListener("touchstart", function firstTouch(e) {
+        goFullscreen();
+        document.removeEventListener("touchstart", firstTouch);
+    }, { once: true });
+
     C.addEventListener("touchstart", handleTouches, { passive: false });
     C.addEventListener("touchmove", handleTouches, { passive: false });
     C.addEventListener("touchend", e => {
@@ -815,11 +834,6 @@ function update(dt) {
     if (state === "title") {
         if (kd("any")) {
             ea();
-            // Request fullscreen on mobile
-            if (isTouch && document.documentElement.requestFullscreen) {
-                document.documentElement.requestFullscreen().catch(()=>{});
-                screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape").catch(()=>{});
-            }
             loadLvl(0); totalScore = 0; levelScores = [];
         }
         return;
