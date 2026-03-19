@@ -925,6 +925,8 @@ function update(dt) {
         // Coyote + jump buffer
         P.coyote = P.grounded ? .1 : P.coyote - dt;
         if (kd("jp")) P.jbuf = .12;
+        // Auto-jump: if holding jump and just landed, refill buffer
+        if (kd("j") && P.grounded && P.jbuf <= 0) P.jbuf = .06;
         P.jbuf -= dt;
 
         // Jump
