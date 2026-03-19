@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>GRAVITY FLIP</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+canvas { display: block; border-radius: 12px; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ===== SETUP =====
+const C = document.getElementById("game");
+const $ = C.getContext("2d");
+const W = 800, H = 500;
+C.width = W; C.height = H;
+const T = 28;
+
+// Off-screen buffer for CRT
+const offC = document.createElement("canvas");
+offC.width = W; offC.height = H;
+const o$ = offC.getContext("2d");
+
+// ===== RESPONSIVE SIZING =====
+let canvasScale = 1, canvasOffX = 0, canvasOffY = 0;
+function resizeCanvas() {
+    const s = Math.min(innerWidth / W, innerHeight / H) * 0.95;
+    canvasScale = s;
+    C.style.width = (W * s) + "px";
+    C.style.height = (H * s) + "px";
+    const rect = C.getBoundingClientRect();
+    canvasOffX = rect.left;
+    canvasOffY = rect.top;
+}
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
+
+// ===== INPUT =====
+const keys = {}, jp = {};
+window.addEventListener("keydown", e => {
+    if (!keys[e.code]) jp[e.code] = true;
+    keys[e.code] = true;
+    if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","ShiftLeft","ShiftRight"].includes(e.code)) e.preventDefault();
+});
+window.addEventListener("keyup", e => keys[e.code] = false);
+
+// ===== TOUCH INPUT =====
+const isTouch = 'ontouchstart' in window;
+const touchBtns = [
+    { id: "left",  label: "<",    x: 20,  y: H-70, w: 60, h: 55, key: "ArrowLeft" },
+    { id: "right", label: ">",    x: 90,  y: H-70, w: 60, h: 55, key: "ArrowRight" },
+    { id: "flip",  label: "FLIP", x: W-160, y: H-70, w: 70, h: 55, key: "ShiftLeft" },
+    { id: "jump",  label: "JUMP", x: W-80, y: H-70, w: 70, h: 55, key: "Space" },
+];
+const touchActive = {};
+
+function touchToCanvas(tx, ty) {
+    return { x: (tx - canvasOffX) / canvasScale, y: (ty - canvasOffY) / canvasScale };
+}
+
+function handleTouches(e) {
+    e.preventDefault();
+    const prev = {};
+    for (const b of touchBtns) prev[b.key] = touchActive[b.key];
+    for (const b of touchBtns) touchActive[b.key] = false;
+
+    const touches = e.touches;
+    for (let i = 0; i < touches.length; i++) {
+        const p = touchToCanvas(touches[i].clientX, touches[i].clientY);
+        for (const b of touchBtns) {
+            if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
+                touchActive[b.key] = true;
+            }
+        }
+    }
+    for (const b of touchBtns) {
+        keys[b.key] = touchActive[b.key];
+        if (touchActive[b.key] && !prev[b.key]) jp[b.key] = true;
+    }
+    // any touch = "any" for title screen
+    if (e.type === "touchstart") jp._touch = true;
+}
+
+if (isTouch) {
+    C.addEventListener("touchstart", handleTouches, { passive: false });
+    C.addEventListener("touchmove", handleTouches, { passive: false });
+    C.addEventListener("touchend", e => {
+        e.preventDefault();
+        for (const b of touchBtns) { touchActive[b.key] = false; keys[b.key] = false; }
+    }, { passive: false });
+}
+
+const kd = a => { switch(a) {
+    case "l": return keys.ArrowLeft || keys.KeyA;
+    case "r": return keys.ArrowRight || keys.KeyD;
+    case "j": return keys.ArrowUp || keys.KeyW || keys.Space;
+    case "jp": return jp.ArrowUp || jp.KeyW || jp.Space;
+    case "f": return jp.ShiftLeft || jp.ShiftRight || jp.KeyF;
+    case "re": return jp.KeyR;
+    case "any": return Object.keys(jp).length > 0;
+} return false; };
+
+// ===== MATH =====
+const lerp = (a,b,t) => a+(b-a)*t;
+const clamp = (v,lo,hi) => Math.max(lo,Math.min(hi,v));
+const approach = (c,t,s) => c<t ? Math.min(c+s,t) : c>t ? Math.max(c-s,t) : c;
+const overlap = (a,b) => a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y;
+
+// ===== AUDIO =====
+let ac;
+const ea = () => { if (!ac) ac = new AudioContext(); };
+const tone = (f,d,tp="square",v=.12) => {
+    ea(); const o=ac.createOscillator(), g=ac.createGain();
+    o.type=tp; o.frequency.value=f; g.gain.setValueAtTime(v,ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d);
+    o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime+d);
+};
+const sJump = () => tone(500,.08,"sine",.08);
+const sFlip = () => { tone(180,.12,"sawtooth",.1); setTimeout(()=>tone(360,.08,"sine",.07),40); };
+const sDie = () => { tone(200,.15,"square",.1); setTimeout(()=>tone(100,.2,"square",.08),80); };
+const sGoal = () => { [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,.12,"sine",.08),i*80)); };
+const sLand = () => tone(60,.04,"sine",.06);
+const sSwitch = () => { tone(800,.06,"square",.06); tone(1200,.08,"sine",.05); };
+const sGate = () => tone(300,.15,"sawtooth",.06);
+
+// ===== PARTICLES =====
+let parts = [];
+const spawn = (x,y,n,cfg) => {
+    for (let i=0;i<n;i++) parts.push({
+        x, y, vx:(Math.random()-.5)*(cfg.spread||200), vy:(cfg.dirY||0)*Math.random()*350+(cfg.vy||0),
+        life:cfg.life||.3+Math.random()*.3, max:cfg.life||.3+Math.random()*.3,
+        sz:cfg.sz||2+Math.random()*3, col:cfg.col||"#fff", grav:cfg.grav||0,
+        text:cfg.text||null
+    });
+};
+const spawnText = (x,y,text,col) => {
+    parts.push({ x, y, vx:(Math.random()-.5)*40, vy:-80, life:1, max:1, sz:0, col, grav:0, text });
+};
+const updateParts = dt => {
+    for (let i=parts.length-1;i>=0;i--) {
+        const p=parts[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=p.grav*dt; p.life-=dt;
+        if (p.life<=0) parts.splice(i,1);
+    }
+    if (parts.length>400) parts.length=400;
+};
+
+// ===== LEVEL BUILDER =====
+const r = (gx,gy,gw,gh,tp="solid") => ({x:gx*T,y:gy*T,w:gw*T,h:gh*T,type:tp});
+const ow = (gx,gy,gw,gh,dir="up") => ({x:gx*T,y:gy*T,w:gw*T,h:Math.max(gh*T,6),type:"oneway",dir});
+
+// ===== LEVELS =====
+const levels = [
+// ===== PHASE 1: FOUNDATIONS (1-5) =====
+{
+    name: "FIRST STEPS", spawn: [2,13], grav: 1, canFlip: false, parFlips: 0,
+    hint: "ARROWS move · SPACE jump",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(7,13,3,1), r(12,11,3,1), r(17,13,2,1), r(21,12,3,1),
+    ],
+    spikes: [], goal: r(26,14,1,1,"goal"),
+},
+{
+    name: "LOOK UP", spawn: [2,13], grav: 1, canFlip: true, parFlips: 2,
+    hint: "SHIFT flips gravity!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(12,6,2,9),
+        r(14,2,5,1),
+        r(20,15,10,3),
+    ],
+    spikes: [], goal: r(26,14,1,1,"goal"),
+},
+{
+    name: "TRUST FALL", spawn: [2,13], grav: 1, canFlip: true, parFlips: 2,
+    hint: "flip mid-air to cross!",
+    platforms: [
+        r(0,15,9,3), r(0,0,30,1),
+        r(9,2,10,1),
+        r(21,15,9,3),
+        r(13,9,3,1),
+    ],
+    spikes: [ r(9,17,12,1,"spike") ],
+    goal: r(26,14,1,1,"goal"),
+},
+{
+    name: "ZIGZAG", spawn: [2,13], grav: 1, canFlip: true, parFlips: 4,
+    hint: "",
+    platforms: [
+        r(0,15,5,3), r(0,0,30,1), r(0,15,1,3),
+        r(7,2,4,1), r(13,15,4,1), r(19,2,4,1), r(25,15,5,3),
+    ],
+    spikes: [
+        r(5,17,8,1,"spike"), r(11,0,2,1,"spike"),
+        r(17,17,8,1,"spike"), r(23,0,2,1,"spike"),
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "FLIP MAZE", spawn: [2,7], grav: 1, canFlip: true, parFlips: 6,
+    hint: "",
+    platforms: [
+        r(0,0,30,1), r(0,15,30,3), r(0,0,1,18), r(29,0,1,18),
+        r(6,10,1,5), r(12,10,1,5), r(18,10,1,5), r(24,10,1,5),
+        r(9,1,1,5), r(15,1,1,5), r(21,1,1,5),
+        r(6,10,3,1), r(12,10,3,1), r(18,10,3,1),
+        r(9,6,3,1), r(15,6,3,1), r(21,6,3,1),
+    ],
+    spikes: [
+        r(3,14,3,1,"spike"), r(14,1,1,1,"spike"), r(20,14,3,1,"spike"),
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+// ===== PHASE 2: MOVING PLATFORMS (6-10) =====
+{
+    name: "MOVING DAY", spawn: [2,13], grav: 1, canFlip: true, parFlips: 2,
+    hint: "ride the platforms!",
+    platforms: [
+        r(0,15,6,3), r(0,0,30,1), r(24,15,6,3),
+    ],
+    spikes: [ r(6,17,18,1,"spike") ],
+    movers: [
+        { x:8*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.2, phase:0 },
+        { x:16*T, y:11*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.2, phase:0.5 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "ELEVATOR", spawn: [2,13], grav: 1, canFlip: true, parFlips: 2,
+    hint: "flip at the top!",
+    platforms: [
+        r(0,15,8,3), r(0,0,30,1), r(20,15,10,3),
+        r(12,0,1,10),
+    ],
+    spikes: [],
+    movers: [
+        { x:9*T, y:13*T, w:3*T, h:T, dx:0, dy:1, range:5*T, speed:0.8, phase:0 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "CONVEYOR", spawn: [2,13], grav: 1, canFlip: true, parFlips: 4,
+    hint: "",
+    platforms: [
+        r(0,15,5,3), r(0,0,30,1), r(25,15,5,3),
+    ],
+    spikes: [ r(5,17,20,1,"spike") ],
+    movers: [
+        { x:6*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0 },
+        { x:14*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.5 },
+        { x:8*T, y:2*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.25 },
+        { x:16*T, y:2*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.75 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "TRAFFIC", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
+    hint: "",
+    platforms: [
+        r(0,15,4,3), r(0,0,30,1), r(26,15,4,3),
+    ],
+    spikes: [ r(4,17,22,1,"spike") ],
+    movers: [
+        { x:5*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.5, phase:0 },
+        { x:10*T, y:11*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.8, phase:0.2 },
+        { x:15*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.3, phase:0.4 },
+        { x:20*T, y:10*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.6, phase:0.6 },
+        { x:12*T, y:5*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.8 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "GAUNTLET I", spawn: [2,13], grav: 1, canFlip: true, parFlips: 5,
+    hint: "",
+    platforms: [
+        r(0,15,4,3), r(0,0,30,1), r(26,15,4,3),
+        r(12,7,1,8), r(20,1,1,8),
+    ],
+    spikes: [
+        r(4,17,8,1,"spike"), r(13,14,7,1,"spike"), r(21,0,5,1,"spike"),
+    ],
+    movers: [
+        { x:5*T, y:12*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.3, phase:0 },
+        { x:14*T, y:5*T, w:2*T, h:T, dx:0, dy:1, range:3*T, speed:1.0, phase:0 },
+        { x:22*T, y:2*T, w:3*T, h:T, dx:1, dy:0, range:2*T, speed:1.5, phase:0.5 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+// ===== PHASE 3: TIMED SWITCHES (11-15) =====
+{
+    name: "RED LIGHT", spawn: [2,13], grav: 1, canFlip: true, parFlips: 2,
+    hint: "stand on switch to open gate!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(20,5,1,10),
+    ],
+    spikes: [],
+    switches: [{ x:10*T, y:14*T, w:2*T, h:T, gateId:0, timer:4 }],
+    gates: [{ id:0, x:20*T, y:5*T, w:T, h:10*T }],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "RELAY", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
+    hint: "chain the switches!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(10,5,1,10), r(20,5,1,10),
+    ],
+    spikes: [],
+    switches: [
+        { x:6*T, y:14*T, w:2*T, h:T, gateId:0, timer:5 },
+        { x:15*T, y:14*T, w:2*T, h:T, gateId:1, timer:5 },
+    ],
+    gates: [
+        { id:0, x:10*T, y:5*T, w:T, h:10*T },
+        { id:1, x:20*T, y:5*T, w:T, h:10*T },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "SWITCH FLIP", spawn: [2,13], grav: 1, canFlip: true, parFlips: 4,
+    hint: "switch on ceiling, gate on floor",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(15,10,1,5),
+    ],
+    spikes: [],
+    switches: [{ x:8*T, y:T, w:2*T, h:T, gateId:0, timer:5 }],
+    gates: [{ id:0, x:15*T, y:10*T, w:T, h:5*T }],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "CLOCK TOWER", spawn: [2,13], grav: 1, canFlip: true, parFlips: 6,
+    hint: "",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(8,5,1,10), r(16,5,1,10), r(24,5,1,10),
+    ],
+    spikes: [ r(10,14,5,1,"spike") ],
+    switches: [
+        { x:4*T, y:14*T, w:2*T, h:T, gateId:0, timer:4 },
+        { x:12*T, y:14*T, w:2*T, h:T, gateId:1, timer:4 },
+        { x:20*T, y:14*T, w:2*T, h:T, gateId:2, timer:4 },
+    ],
+    gates: [
+        { id:0, x:8*T, y:5*T, w:T, h:10*T },
+        { id:1, x:16*T, y:5*T, w:T, h:10*T },
+        { id:2, x:24*T, y:5*T, w:T, h:10*T },
+    ],
+    movers: [
+        { x:9*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:2*T, speed:1.0, phase:0 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "GAUNTLET II", spawn: [2,13], grav: 1, canFlip: true, parFlips: 8,
+    hint: "",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        r(6,8,1,7), r(14,1,1,7), r(22,8,1,7),
+    ],
+    spikes: [
+        r(8,14,5,1,"spike"), r(16,14,5,1,"spike"),
+    ],
+    switches: [
+        { x:3*T, y:14*T, w:2*T, h:T, gateId:0, timer:6 },
+        { x:10*T, y:T, w:2*T, h:T, gateId:1, timer:5 },
+    ],
+    gates: [
+        { id:0, x:6*T, y:8*T, w:T, h:7*T },
+        { id:1, x:14*T, y:1*T, w:T, h:7*T },
+    ],
+    movers: [
+        { x:15*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.2, phase:0 },
+        { x:23*T, y:5*T, w:3*T, h:T, dx:0, dy:1, range:4*T, speed:0.8, phase:0 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+// ===== PHASE 4: GRAVITY ZONES (16-20) =====
+{
+    name: "FIELD TRIP", spawn: [2,13], grav: 1, canFlip: true, parFlips: 2,
+    hint: "colored zones force gravity!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(14,6,1,9),
+    ],
+    spikes: [],
+    gzones: [
+        { x:10*T, y:2*T, w:4*T, h:6*T, dir:-1, lockFlip:false },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "FUNNELS", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
+    hint: "",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        r(8,8,1,7), r(14,1,1,7), r(22,8,1,7),
+    ],
+    spikes: [ r(10,14,4,1,"spike") ],
+    gzones: [
+        { x:9*T, y:2*T, w:5*T, h:5*T, dir:-1, lockFlip:false },
+        { x:15*T, y:9*T, w:5*T, h:5*T, dir:1, lockFlip:false },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "OVERRIDE", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
+    hint: "some zones lock your flip!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+        r(10,8,1,7), r(20,1,1,7),
+    ],
+    spikes: [ r(12,14,6,1,"spike") ],
+    gzones: [
+        { x:11*T, y:1*T, w:5*T, h:6*T, dir:-1, lockFlip:true },
+        { x:21*T, y:9*T, w:5*T, h:5*T, dir:1, lockFlip:false },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "FLUX", spawn: [2,13], grav: 1, canFlip: true, parFlips: 4,
+    hint: "",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        r(10,7,1,8), r(20,1,1,8),
+    ],
+    spikes: [ r(12,14,7,1,"spike") ],
+    gzones: [
+        { x:4*T, y:2*T, w:5*T, h:5*T, dir:-1, lockFlip:false },
+        { x:11*T, y:2*T, w:4*T, h:5*T, dir:-1, lockFlip:true },
+        { x:21*T, y:9*T, w:5*T, h:5*T, dir:1, lockFlip:false },
+    ],
+    movers: [
+        { x:12*T, y:12*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.0, phase:0 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "GAUNTLET III", spawn: [2,13], grav: 1, canFlip: true, parFlips: 8,
+    hint: "",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        r(7,8,1,7), r(14,1,1,7), r(22,8,1,7),
+    ],
+    spikes: [
+        r(3,14,3,1,"spike"), r(16,14,3,1,"spike"), r(9,0,3,1,"spike"),
+    ],
+    switches: [
+        { x:4*T, y:14*T, w:2*T, h:T, gateId:0, timer:5 },
+    ],
+    gates: [
+        { id:0, x:7*T, y:8*T, w:T, h:7*T },
+    ],
+    gzones: [
+        { x:9*T, y:2*T, w:4*T, h:5*T, dir:-1, lockFlip:false },
+        { x:23*T, y:9*T, w:4*T, h:5*T, dir:1, lockFlip:true },
+    ],
+    movers: [
+        { x:15*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.3, phase:0 },
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+// ===== PHASE 5: ONE-WAY + MASTERY (21-25) =====
+{
+    name: "ONE WAY", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
+    hint: "dashed platforms: one direction only!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1),
+    ],
+    spikes: [ r(5,17,20,1,"spike") ],
+    oneways: [
+        ow(6,12,4,0.2,"up"), ow(12,9,4,0.2,"up"), ow(18,6,4,0.2,"up"),
+        ow(24,12,4,0.2,"up"),
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "TRAPDOOR", spawn: [2,13], grav: 1, canFlip: true, parFlips: 5,
+    hint: "one-ways change with gravity!",
+    platforms: [
+        r(0,15,5,3), r(0,0,30,1), r(25,15,5,3),
+    ],
+    spikes: [ r(5,17,20,1,"spike") ],
+    oneways: [
+        ow(7,10,4,0.2,"up"), ow(13,5,4,0.2,"down"),
+        ow(19,10,4,0.2,"up"), ow(13,12,4,0.2,"down"),
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "EVERYTHING BAGEL", spawn: [2,13], grav: 1, canFlip: true, parFlips: 8,
+    hint: "",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        r(8,8,1,7), r(16,1,1,7), r(24,8,1,7),
+    ],
+    spikes: [
+        r(10,14,5,1,"spike"), r(18,0,3,1,"spike"),
+    ],
+    switches: [
+        { x:4*T, y:14*T, w:2*T, h:T, gateId:0, timer:6 },
+    ],
+    gates: [
+        { id:0, x:8*T, y:8*T, w:T, h:7*T },
+    ],
+    gzones: [
+        { x:9*T, y:2*T, w:4*T, h:5*T, dir:-1, lockFlip:false },
+    ],
+    movers: [
+        { x:17*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.2, phase:0 },
+    ],
+    oneways: [
+        ow(25,6,3,0.2,"up"), ow(25,11,3,0.2,"up"),
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+{
+    name: "THE CLIMB", spawn: [2,15], grav: 1, canFlip: true, parFlips: 10,
+    hint: "climb to the top!",
+    platforms: [
+        r(0,17,30,1), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        // Staggered ledges going up
+        r(3,14,5,1), r(22,14,5,1),
+        r(3,10,5,1), r(22,10,5,1),
+        r(3,6,5,1), r(22,6,5,1),
+        r(3,2,5,1),
+    ],
+    spikes: [
+        r(10,16,10,1,"spike"), r(10,0,10,1,"spike"),
+    ],
+    movers: [
+        { x:10*T, y:14*T, w:3*T, h:T, dx:1, dy:0, range:5*T, speed:1.0, phase:0 },
+        { x:10*T, y:10*T, w:3*T, h:T, dx:1, dy:0, range:5*T, speed:1.0, phase:0.5 },
+        { x:10*T, y:6*T, w:3*T, h:T, dx:1, dy:0, range:5*T, speed:1.2, phase:0.25 },
+    ],
+    gzones: [
+        { x:14*T, y:3*T, w:4*T, h:3*T, dir:-1, lockFlip:false },
+    ],
+    goal: r(14,1,1,1,"goal"),
+},
+{
+    name: "FINALE", spawn: [2,13], grav: 1, canFlip: true, parFlips: 12,
+    hint: "the final challenge!",
+    platforms: [
+        r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
+        // Walls creating chambers
+        r(6,6,1,9), r(12,1,1,9), r(18,6,1,9), r(24,1,1,9),
+    ],
+    spikes: [
+        r(2,14,3,1,"spike"), r(8,0,3,1,"spike"),
+        r(14,14,3,1,"spike"), r(20,0,3,1,"spike"),
+    ],
+    switches: [
+        { x:3*T, y:14*T, w:2*T, h:T, gateId:0, timer:5 },
+        { x:15*T, y:T, w:2*T, h:T, gateId:1, timer:5 },
+    ],
+    gates: [
+        { id:0, x:6*T, y:6*T, w:T, h:4*T },
+        { id:1, x:18*T, y:6*T, w:T, h:4*T },
+    ],
+    gzones: [
+        { x:7*T, y:2*T, w:5*T, h:4*T, dir:-1, lockFlip:false },
+        { x:19*T, y:10*T, w:5*T, h:4*T, dir:1, lockFlip:true },
+    ],
+    movers: [
+        { x:13*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:2*T, speed:1.3, phase:0 },
+        { x:25*T, y:5*T, w:3*T, h:T, dx:0, dy:1, range:4*T, speed:0.9, phase:0 },
+    ],
+    oneways: [
+        ow(7,10,4,0.2,"up"), ow(19,5,4,0.2,"down"),
+    ],
+    goal: r(27,14,1,1,"goal"),
+},
+];
+
+// ===== GAME STATE =====
+let state = "title", stateT = 0, lvlIdx = 0, gameTime = 0;
+let flash = 0, deathFlash = 0, worldAngle = 0, targetAngle = 0;
+let flipCount = 0, bestFlips = [];
+let trail = [];
+let levelDeaths = 0, levelTime = 0;
+let totalScore = 0, levelScores = [];
+
+// Score state
+let scorePopups = [];
+
+// Switch/gate runtime state
+let switchTimers = [], gateOpen = [];
+
+// Mover positions
+let moverPos = [];
+
+// ===== PLAYER =====
+let P = {};
+function resetP() {
+    const lv = levels[lvlIdx];
+    P = {
+        x:lv.spawn[0]*T, y:lv.spawn[1]*T, w:16, h:22,
+        vx:0, vy:0, gd: lv.grav,
+        grounded:false, coyote:0, jbuf:0,
+        flipCD:0, flips:0, alive:true,
+        sx:1, sy:1, facing:1,
+        invuln: 0, inGravZone: false, flipLocked: false,
+        mouthOpen: 0,
+    };
+    trail = [];
+    parts = [];
+    worldAngle = P.gd > 0 ? 0 : Math.PI;
+    targetAngle = worldAngle;
+    flipCount = 0;
+    levelDeaths = 0;
+    levelTime = 0;
+
+    // Init switch/gate state
+    const sw = lv.switches || [];
+    const gt = lv.gates || [];
+    switchTimers = sw.map(() => 0);
+    gateOpen = gt.map(() => false);
+
+    // Init mover positions
+    const mv = lv.movers || [];
+    moverPos = mv.map(m => ({ x: m.x, y: m.y, prevX: m.x, prevY: m.y }));
+}
+
+function loadLvl(i) {
+    lvlIdx = i; resetP(); state = "playing"; stateT = 0;
+}
+
+// ===== COLLISION =====
+function getLvlRects() {
+    const lv = levels[lvlIdx];
+    const rects = [...lv.platforms, ...lv.spikes, lv.goal];
+    // Add closed gates
+    const gt = lv.gates || [];
+    for (let i = 0; i < gt.length; i++) {
+        if (!gateOpen[i]) rects.push({ x:gt[i].x, y:gt[i].y, w:gt[i].w, h:gt[i].h, type:"solid" });
+    }
+    // Add movers
+    const mv = lv.movers || [];
+    for (let i = 0; i < mv.length; i++) {
+        rects.push({ x:moverPos[i].x, y:moverPos[i].y, w:mv[i].w, h:mv[i].h, type:"solid", isMover:true, moverIdx:i });
+    }
+    return rects;
+}
+
+function checkOneway(delta, axis) {
+    const lv = levels[lvlIdx];
+    const ows = lv.oneways || [];
+    for (const ow of ows) {
+        const owRect = { x:ow.x, y:ow.y, w:ow.w, h:ow.h };
+        if (!overlap(P, owRect)) continue;
+        // Only collide when moving against the one-way direction
+        if (axis === "y") {
+            if (ow.dir === "up" && delta > 0 && P.y + P.h - delta <= ow.y + 2) {
+                P.y = ow.y - P.h;
+                if (P.gd > 0) { P.grounded = true; landEffect(); }
+                P.vy = 0;
+                return true;
+            }
+            if (ow.dir === "down" && delta < 0 && P.y - delta >= ow.y + ow.h - 2) {
+                P.y = ow.y + ow.h;
+                if (P.gd < 0) { P.grounded = true; landEffect(); }
+                P.vy = 0;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function landEffect() {
+    if (Math.abs(P.vy) > 150 || (!P.grounded)) {
+        sLand();
+        spawn(P.x+P.w/2, P.gd>0?P.y+P.h:P.y, 6, {spread:120,dirY:-P.gd*.5,col:"#0f4",sz:2,grav:300*P.gd});
+        P.sx = 1.35; P.sy = .65;
+    }
+}
+
+let carriedMoverIdx = -1;
+
+function moveAxis(axis, delta) {
+    if (Math.abs(delta) < .001) return;
+    if (axis === "x") P.x += delta; else P.y += delta;
+
+    const rects = getLvlRects();
+    for (const b of rects) {
+        if (!overlap(P, b)) continue;
+        if (b.type === "spike") { if (P.invuln <= 0) { kill(); return; } else continue; }
+        if (b.type === "goal") { win(); return; }
+
+        if (axis === "x") {
+            if (delta > 0) P.x = b.x - P.w;
+            else P.x = b.x + b.w;
+            P.vx = 0;
+        } else {
+            if ((delta > 0 && P.gd > 0) || (delta < 0 && P.gd < 0)) {
+                if (!P.grounded) landEffect();
+                P.grounded = true;
+                if (b.isMover) carriedMoverIdx = b.moverIdx;
+            }
+            if (delta > 0) P.y = b.y - P.h; else P.y = b.y + b.h;
+            P.vy = 0;
+        }
+    }
+
+    // Check one-ways after normal collision
+    if (axis === "y") checkOneway(delta, axis);
+}
+
+function kill() {
+    if (!P.alive) return;
+    P.alive = false;
+    levelDeaths++;
+    sDie();
+    deathFlash = .2;
+    // Square pixel explosion
+    spawn(P.x+P.w/2, P.y+P.h/2, 25, {spread:350,vy:0,col:"#f44",sz:4,life:.5,grav:0});
+    spawn(P.x+P.w/2, P.y+P.h/2, 15, {spread:200,vy:0,col:"#ff8",sz:3,life:.4,grav:0});
+    setTimeout(() => { if (state==="playing") { resetDeathOnly(); } }, 400);
+}
+
+function resetDeathOnly() {
+    const lv = levels[lvlIdx];
+    const deaths = levelDeaths;
+    const time = levelTime;
+    P = {
+        x:lv.spawn[0]*T, y:lv.spawn[1]*T, w:16, h:22,
+        vx:0, vy:0, gd: lv.grav,
+        grounded:false, coyote:0, jbuf:0,
+        flipCD:0, flips:0, alive:true,
+        sx:1, sy:1, facing:1,
+        invuln: 0.3, inGravZone: false, flipLocked: false,
+        mouthOpen: 0,
+    };
+    trail = [];
+    parts = [];
+    worldAngle = P.gd > 0 ? 0 : Math.PI;
+    targetAngle = worldAngle;
+    flipCount = 0;
+    levelDeaths = deaths;
+    levelTime = time;
+}
+
+function calcScore() {
+    const lv = levels[lvlIdx];
+    const base = 1000;
+    const flipBonus = Math.max(0, ((lv.parFlips||0) - flipCount) * 50);
+    const timeBonus = Math.max(0, 500 - Math.floor(levelTime) * 10);
+    const deathBonus = levelDeaths === 0 ? 500 : 0;
+    return { base, flipBonus, timeBonus, deathBonus, total: base + flipBonus + timeBonus + deathBonus };
+}
+
+function getGrade(score) {
+    const lv = levels[lvlIdx];
+    const maxScore = 1000 + (lv.parFlips||0)*50 + 500 + 500;
+    const pct = score / maxScore;
+    if (pct >= 0.9) return "S";
+    if (pct >= 0.7) return "A";
+    if (pct >= 0.5) return "B";
+    return "C";
+}
+
+function win() {
+    if (state !== "playing") return;
+    sGoal();
+    const sc = calcScore();
+    levelScores[lvlIdx] = sc.total;
+    totalScore += sc.total;
+    state = "level_complete"; stateT = 0;
+    if (!bestFlips[lvlIdx] || flipCount < bestFlips[lvlIdx]) bestFlips[lvlIdx] = flipCount;
+    // Gold star burst
+    spawn(P.x+P.w/2, P.y+P.h/2, 40, {spread:400,vy:-100,col:"#ff0",sz:4,life:.8,grav:-200});
+    spawnText(P.x+P.w/2, P.y - 20, "+"+sc.total, "#ff0");
+}
+
+// ===== UPDATE =====
+function update(dt) {
+    stateT += dt;
+    gameTime += dt;
+
+    if (state === "title") {
+        if (kd("any")) { ea(); loadLvl(0); totalScore = 0; levelScores = []; }
+        return;
+    }
+
+    if (state === "playing" && P.alive) {
+        const lv = levels[lvlIdx];
+        levelTime += dt;
+        if (kd("re")) { resetP(); return; }
+
+        // Update movers
+        const mv = lv.movers || [];
+        for (let i = 0; i < mv.length; i++) {
+            const m = mv[i];
+            moverPos[i].prevX = moverPos[i].x;
+            moverPos[i].prevY = moverPos[i].y;
+            moverPos[i].x = m.x + Math.sin(gameTime * m.speed + m.phase * Math.PI * 2) * m.range * m.dx;
+            moverPos[i].y = m.y + Math.sin(gameTime * m.speed + m.phase * Math.PI * 2) * m.range * m.dy;
+        }
+
+        // Update switches
+        const sw = lv.switches || [];
+        const gt = lv.gates || [];
+        for (let i = 0; i < sw.length; i++) {
+            const s = sw[i];
+            const pRect = { x:P.x, y:P.y, w:P.w, h:P.h };
+            const sRect = { x:s.x, y:s.y, w:s.w, h:s.h };
+            if (overlap(pRect, sRect)) {
+                if (switchTimers[i] <= 0) sSwitch();
+                switchTimers[i] = s.timer;
+            }
+            if (switchTimers[i] > 0) {
+                switchTimers[i] -= dt;
+                // Open matching gate
+                for (let j = 0; j < gt.length; j++) {
+                    if (gt[j].id === s.gateId) gateOpen[j] = switchTimers[i] > 0;
+                }
+            }
+        }
+
+        // Check gravity zones
+        const gz = lv.gzones || [];
+        P.inGravZone = false;
+        P.flipLocked = false;
+        for (const z of gz) {
+            const zRect = { x:z.x, y:z.y, w:z.w, h:z.h };
+            if (overlap(P, zRect)) {
+                P.inGravZone = true;
+                if (z.lockFlip) P.flipLocked = true;
+                if (P.gd !== z.dir) {
+                    P.gd = z.dir;
+                    targetAngle = P.gd > 0 ? 0 : Math.PI;
+                    worldAngle = targetAngle;
+                }
+            }
+        }
+
+        // Move
+        let tx = 0;
+        if (kd("l")) { tx = -260; P.facing = -1; }
+        if (kd("r")) { tx = 260; P.facing = 1; }
+        const acc = P.grounded ? 2400 : 1200;
+        P.vx = tx ? approach(P.vx, tx, acc*dt) : approach(P.vx, 0, (P.grounded?2000:300)*dt);
+
+        // Mouth animation
+        P.mouthOpen = Math.abs(P.vx) > 50 ? (Math.sin(gameTime * 12) * 0.5 + 0.5) : 0;
+
+        // Coyote + jump buffer
+        P.coyote = P.grounded ? .1 : P.coyote - dt;
+        if (kd("jp")) P.jbuf = .12;
+        P.jbuf -= dt;
+
+        // Jump
+        if (P.jbuf > 0 && P.coyote > 0) {
+            P.vy = -540 * P.gd;
+            P.grounded = false; P.coyote = 0; P.jbuf = 0;
+            P.sx = .75; P.sy = 1.3;
+            sJump();
+            spawn(P.x+P.w/2, P.gd>0?P.y+P.h:P.y, 4, {spread:80,dirY:P.gd,col:"#0f4",sz:3,grav:400*P.gd});
+        }
+        if (!kd("j") && P.vy * P.gd < 0) P.vy *= .88;
+
+        // Gravity flip
+        P.flipCD -= dt;
+        if (kd("f") && lv.canFlip && P.flipCD <= 0 && !P.flipLocked) {
+            P.gd *= -1;
+            P.vy = P.gd * 200;
+            P.flipCD = .15;
+            P.grounded = false;
+            flipCount++;
+            P.sx = .6; P.sy = 1.5;
+            targetAngle += Math.PI;
+            flash = .2;
+            sFlip();
+            const cy = P.y + P.h/2;
+            // Neon cyan/magenta ring
+            spawn(P.x+P.w/2, cy, 18, {spread:250, dirY:P.gd, col:"#0ff", sz:4, life:.5, grav:600*P.gd});
+            spawn(P.x+P.w/2, cy, 8, {spread:150, dirY:P.gd, col:"#f0f", sz:3, life:.4, grav:400*P.gd});
+            for (let i=0;i<12;i++) {
+                const ang = (i/12)*Math.PI*2;
+                parts.push({ x:P.x+P.w/2, y:cy, vx:Math.cos(ang)*200, vy:Math.sin(ang)*200,
+                    life:.3, max:.3, sz:3, col:i%2?"#0ff":"#f0f", grav:0 });
+            }
+        }
+
+        // Gravity
+        P.vy += 1600 * P.gd * dt;
+        P.vy = clamp(P.vy, -700, 700);
+
+        if (P.invuln > 0) P.invuln -= dt;
+
+        // Carry on mover
+        carriedMoverIdx = -1;
+        P.grounded = false;
+        moveAxis("x", P.vx * dt);
+        if (!P.alive) return;
+        moveAxis("y", P.vy * dt);
+        if (!P.alive) return;
+
+        // Apply mover carry
+        if (carriedMoverIdx >= 0) {
+            const mp = moverPos[carriedMoverIdx];
+            P.x += mp.x - mp.prevX;
+        }
+
+        // Out of bounds
+        if (P.y > 600 || P.y < -200) kill();
+
+        // Trail
+        trail.push({x:P.x, y:P.y, gd:P.gd, t:1});
+        if (trail.length > 8) trail.shift();
+
+        // Squash recovery
+        P.sx = approach(P.sx, 1, 5*dt);
+        P.sy = approach(P.sy, 1, 5*dt);
+
+        // Running particles
+        if (P.grounded && Math.abs(P.vx) > 100 && Math.random() < .3) {
+            spawn(P.x+P.w/2, P.gd>0?P.y+P.h:P.y, 1, {spread:40,dirY:-P.gd*.3,col:"#0a4",sz:2,life:.2,grav:200*P.gd});
+        }
+    }
+
+    worldAngle = lerp(worldAngle, targetAngle, Math.min(1, 12*dt));
+
+    if (state === "level_complete" && stateT > 2.5) {
+        if (kd("any") || stateT > 4) {
+            if (lvlIdx+1 < levels.length) loadLvl(lvlIdx+1);
+            else { state = "win"; stateT = 0; }
+        }
+    }
+
+    if (state === "win" && kd("re")) { loadLvl(0); totalScore = 0; levelScores = []; }
+
+    flash = Math.max(0, flash - dt*3);
+    deathFlash = Math.max(0, deathFlash - dt*2);
+    updateParts(dt);
+}
+
+// ===== RENDER (to off-screen buffer) =====
+function render() {
+    const ctx = o$; // Render to offscreen buffer
+    const lv = levels[lvlIdx] || levels[0];
+
+    // Black background
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+
+    // Dot-matrix grid
+    ctx.fillStyle = "rgba(0,255,68,0.04)";
+    for (let x = 0; x < W; x += 6) {
+        for (let y = 0; y < H; y += 6) {
+            ctx.fillRect(x, y, 1, 1);
+        }
+    }
+
+    if (state === "title") { renderTitle(ctx); composite(); return; }
+
+    // === Level rendering ===
+    const isFlipped = P.gd < 0;
+
+    // Gravity zones (rendered behind everything)
+    const gz = lv.gzones || [];
+    for (const z of gz) {
+        const isUp = z.dir === -1;
+        ctx.fillStyle = isUp ? "rgba(128,0,255,0.12)" : "rgba(255,200,0,0.12)";
+        ctx.fillRect(z.x, z.y, z.w, z.h);
+        // Border
+        ctx.strokeStyle = isUp ? "rgba(128,0,255,0.4)" : "rgba(255,200,0,0.4)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(z.x, z.y, z.w, z.h);
+        // Direction arrows
+        ctx.fillStyle = isUp ? "rgba(180,80,255,0.3)" : "rgba(255,220,0,0.3)";
+        const arrowDir = isUp ? -1 : 1;
+        for (let ax = z.x + 14; ax < z.x + z.w - 10; ax += 28) {
+            for (let ay = z.y + 14; ay < z.y + z.h - 10; ay += 28) {
+                const bob = Math.sin(gameTime * 3 + ax * 0.1) * 3;
+                ctx.beginPath();
+                ctx.moveTo(ax, ay + arrowDir * 6 + bob);
+                ctx.lineTo(ax - 5, ay - arrowDir * 4 + bob);
+                ctx.lineTo(ax + 5, ay - arrowDir * 4 + bob);
+                ctx.fill();
+            }
+        }
+        // Lock indicator
+        if (z.lockFlip) {
+            ctx.fillStyle = isUp ? "rgba(180,80,255,0.5)" : "rgba(255,220,0,0.5)";
+            ctx.font = "bold 10px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("LOCKED", z.x + z.w/2, z.y + z.h/2);
+        }
+    }
+
+    // Platforms - bright green blocks
+    for (const p of lv.platforms) {
+        const isWall = p.h > p.w * 1.5;
+        const col = isWall ? "#0066ff" : "#00ff44";
+        const darkCol = isWall ? "#0044aa" : "#00bb33";
+
+        // 2px black outline
+        ctx.fillStyle = "#000";
+        ctx.fillRect(p.x-1, p.y-1, p.w+2, p.h+2);
+        // Body
+        ctx.fillStyle = col;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        // Darker border
+        ctx.fillStyle = darkCol;
+        ctx.fillRect(p.x, p.y, p.w, 2);
+        ctx.fillRect(p.x, p.y+p.h-2, p.w, 2);
+        ctx.fillRect(p.x, p.y, 2, p.h);
+        ctx.fillRect(p.x+p.w-2, p.y, 2, p.h);
+        // 4x4 tile pattern
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
+        for (let tx = p.x; tx < p.x + p.w; tx += 8) {
+            for (let ty = p.y; ty < p.y + p.h; ty += 8) {
+                if ((Math.floor(tx/8) + Math.floor(ty/8)) % 2 === 0) {
+                    ctx.fillRect(tx, ty, 4, 4);
+                }
+            }
+        }
+    }
+
+    // Moving platforms
+    const mv = lv.movers || [];
+    for (let i = 0; i < mv.length; i++) {
+        const m = mv[i];
+        const mp = moverPos[i];
+        ctx.fillStyle = "#000";
+        ctx.fillRect(mp.x-1, mp.y-1, m.w+2, m.h+2);
+        ctx.fillStyle = "#00ff88";
+        ctx.fillRect(mp.x, mp.y, m.w, m.h);
+        ctx.fillStyle = "#00cc66";
+        ctx.fillRect(mp.x, mp.y, m.w, 2);
+        ctx.fillRect(mp.x, mp.y+m.h-2, m.w, 2);
+        // Arrow indicators
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        if (m.dx) {
+            ctx.fillRect(mp.x + m.w/2 - 4, mp.y + m.h/2 - 1, 8, 2);
+        }
+        if (m.dy) {
+            ctx.fillRect(mp.x + m.w/2 - 1, mp.y + m.h/2 - 4, 2, 8);
+        }
+    }
+
+    // Gates
+    const gt = lv.gates || [];
+    for (let i = 0; i < gt.length; i++) {
+        const g = gt[i];
+        if (gateOpen[i]) {
+            // Blink if about to close
+            const sw = lv.switches || [];
+            let timeLeft = 99;
+            for (let j = 0; j < sw.length; j++) {
+                if (sw[j].gateId === g.id) timeLeft = Math.min(timeLeft, switchTimers[j]);
+            }
+            if (timeLeft < 1 && Math.sin(gameTime * 12) > 0) {
+                ctx.fillStyle = "rgba(255,100,100,0.15)";
+                ctx.fillRect(g.x, g.y, g.w, g.h);
+            }
+            // Open gate outline
+            ctx.strokeStyle = "rgba(255,100,100,0.2)";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4,4]);
+            ctx.strokeRect(g.x, g.y, g.w, g.h);
+            ctx.setLineDash([]);
+        } else {
+            ctx.fillStyle = "#000";
+            ctx.fillRect(g.x-1, g.y-1, g.w+2, g.h+2);
+            ctx.fillStyle = "#ff4444";
+            ctx.fillRect(g.x, g.y, g.w, g.h);
+            ctx.fillStyle = "#cc2222";
+            ctx.fillRect(g.x, g.y, g.w, 2);
+            ctx.fillRect(g.x, g.y+g.h-2, g.w, 2);
+            // Crosshatch
+            ctx.strokeStyle = "rgba(0,0,0,0.2)";
+            ctx.lineWidth = 1;
+            for (let dy = 0; dy < g.h; dy += 6) {
+                ctx.beginPath();
+                ctx.moveTo(g.x, g.y + dy);
+                ctx.lineTo(g.x + g.w, g.y + dy);
+                ctx.stroke();
+            }
+        }
+    }
+
+    // Switches
+    const sw = lv.switches || [];
+    for (let i = 0; i < sw.length; i++) {
+        const s = sw[i];
+        const active = switchTimers[i] > 0;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(s.x-1, s.y-1, s.w+2, s.h+2);
+        ctx.fillStyle = active ? "#00ff44" : "#886600";
+        ctx.fillRect(s.x, s.y, s.w, s.h);
+        if (active) {
+            ctx.fillStyle = "rgba(0,255,68,0.3)";
+            ctx.fillRect(s.x-3, s.y-3, s.w+6, s.h+6);
+        }
+        // Arrow/indicator
+        ctx.fillStyle = active ? "#000" : "#aa8800";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(active ? "ON" : "SW", s.x + s.w/2, s.y + s.h/2 + 4);
+    }
+
+    // One-way platforms
+    const ows = lv.oneways || [];
+    for (const ow of ows) {
+        ctx.strokeStyle = "#00ff88";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        const yPos = ow.dir === "up" ? ow.y : ow.y + ow.h;
+        ctx.beginPath();
+        ctx.moveTo(ow.x, yPos);
+        ctx.lineTo(ow.x + ow.w, yPos);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Arrow indicators
+        ctx.fillStyle = "#00ff88";
+        const arrowDir = ow.dir === "up" ? -1 : 1;
+        for (let ax = ow.x + 10; ax < ow.x + ow.w; ax += 20) {
+            ctx.beginPath();
+            ctx.moveTo(ax, yPos + arrowDir * 8);
+            ctx.lineTo(ax - 4, yPos + arrowDir * 2);
+            ctx.lineTo(ax + 4, yPos + arrowDir * 2);
+            ctx.fill();
+        }
+    }
+
+    // Spikes - blinking warning blocks with "!"
+    for (const s of lv.spikes) {
+        const cols = Math.floor(s.w / T);
+        for (let i = 0; i < cols; i++) {
+            const sx = s.x + i * T;
+            const blink = Math.sin(gameTime * 4 * Math.PI + i) > 0;
+            // Body
+            ctx.fillStyle = "#000";
+            ctx.fillRect(sx-1, s.y-1, T+2, s.h+2);
+            ctx.fillStyle = blink ? "#ff2222" : "#aa0000";
+            ctx.fillRect(sx, s.y, T, s.h);
+            // Yellow border
+            ctx.strokeStyle = "#ffaa00";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(sx+1, s.y+1, T-2, s.h-2);
+            // "!" symbol
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 14px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("!", sx + T/2, s.y + s.h/2 + 5);
+        }
+    }
+
+    // Goal - rotating coin/star
+    const g = lv.goal;
+    const pulse = .5 + Math.sin(gameTime * 4) * .5;
+    const starRot = gameTime * 2;
+    const xScale = Math.cos(gameTime * 3) * 0.4 + 0.6; // coin-flip X oscillation
+
+    ctx.save();
+    ctx.translate(g.x + g.w/2, g.y + g.h/2);
+    ctx.rotate(starRot);
+    ctx.scale(xScale, 1);
+
+    // Glow
+    ctx.globalAlpha = 0.2 + pulse * 0.15;
+    ctx.fillStyle = "#ff0";
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * Math.PI * 2 - Math.PI/2;
+        const rad = i % 2 === 0 ? 16 : 8;
+        if (i === 0) ctx.moveTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
+        else ctx.lineTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Star body
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = "#ffd700";
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * Math.PI * 2 - Math.PI/2;
+        const rad = i % 2 === 0 ? 12 : 5;
+        if (i === 0) ctx.moveTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
+        else ctx.lineTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // White sparkle
+    ctx.globalAlpha = pulse * 0.8;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(-1, -6, 2, 12);
+    ctx.fillRect(-6, -1, 12, 2);
+
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // Goal particles
+    if (state === "playing" && Math.random() < .12) {
+        spawn(g.x+Math.random()*g.w, g.y+Math.random()*g.h, 1, {spread:30,vy:-30,col:"#ffd700",sz:2,life:.6,grav:-50});
+    }
+
+    // Trail
+    for (let i = 0; i < trail.length; i++) {
+        const t = trail[i];
+        const alpha = (i/trail.length) * .15;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "#ff0";
+        const s = .6 + (i/trail.length)*.4;
+        ctx.beginPath();
+        ctx.arc(t.x+P.w/2, t.y+P.h/2, P.w*s/2, 0, Math.PI*2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Player - Pac-Man style
+    if (P.alive && !(P.invuln > 0 && Math.sin(stateT*40) > 0)) {
+        const cx = P.x + P.w/2, cy = P.y + P.h/2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(P.sx, P.sy);
+
+        const radius = 11;
+        const mouthAngle = P.mouthOpen * 0.4; // 0 to 0.4 radians
+
+        // Determine facing angle
+        let faceAng = P.facing > 0 ? 0 : Math.PI;
+        if (P.gd < 0) faceAng = P.facing > 0 ? 0 : Math.PI; // Keep horizontal facing
+
+        // Body color
+        const bodyCol = isFlipped ? "#ff66aa" : "#ffdd00";
+        const darkCol = isFlipped ? "#cc4488" : "#ccaa00";
+
+        // Glow
+        ctx.globalAlpha = 0.15;
+        ctx.fillStyle = bodyCol;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Pac-Man body with mouth
+        ctx.fillStyle = bodyCol;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, radius, faceAng + mouthAngle, faceAng + Math.PI * 2 - mouthAngle);
+        ctx.closePath();
+        ctx.fill();
+
+        // Outline
+        ctx.strokeStyle = darkCol;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Eye
+        const eyeOffX = P.facing * 3;
+        const eyeOffY = P.gd > 0 ? -4 : 4;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(eyeOffX, eyeOffY, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Pupil - tracks facing
+        ctx.fillStyle = "#000";
+        ctx.beginPath();
+        ctx.arc(eyeOffX + P.facing * 1.5, eyeOffY, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Flipped: distressed eyebrow
+        if (isFlipped) {
+            ctx.strokeStyle = "#cc4488";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(eyeOffX - 4, eyeOffY - (P.gd > 0 ? 6 : -6));
+            ctx.lineTo(eyeOffX + 4, eyeOffY - (P.gd > 0 ? 4 : -4));
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
+    // Particles
+    for (const p of parts) {
+        ctx.globalAlpha = clamp(p.life/p.max, 0, 1);
+        if (p.text) {
+            ctx.fillStyle = p.col;
+            ctx.font = "bold 14px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(p.text, p.x, p.y);
+        } else {
+            ctx.fillStyle = p.col;
+            // Square pixels
+            ctx.fillRect(p.x-p.sz/2, p.y-p.sz/2, p.sz, p.sz);
+        }
+    }
+    ctx.globalAlpha = 1;
+
+    // HUD
+    if (state === "playing" || state === "level_complete") {
+        ctx.fillStyle = "#0f4"; ctx.globalAlpha = .7;
+        ctx.font = "bold 13px monospace"; ctx.textAlign = "left";
+        ctx.fillText(`${lvlIdx+1}/${levels.length}  ${lv.name}`, 10, 20);
+
+        ctx.textAlign = "right";
+        ctx.fillText(`FLIPS: ${flipCount}`, W-10, 20);
+        ctx.fillText(`TIME: ${Math.floor(levelTime)}s`, W-10, 36);
+
+        // Gravity indicator
+        ctx.globalAlpha = .7;
+        ctx.font = "18px monospace";
+        ctx.fillStyle = isFlipped ? "#f4a" : "#0f4";
+        ctx.fillText(isFlipped ? "▲ REVERSED" : "▼ NORMAL", W-10, 55);
+        if (P.flipLocked) {
+            ctx.fillStyle = "#f44";
+            ctx.fillText("FLIP LOCKED", W-10, 72);
+        }
+        ctx.globalAlpha = 1;
+
+        // Hint
+        if (lv.hint && stateT < 4) {
+            ctx.globalAlpha = Math.min(1, 4-stateT);
+            ctx.textAlign = "center"; ctx.font = "14px monospace";
+            ctx.fillStyle = "#0f4";
+            ctx.fillText(lv.hint, W/2, H-20);
+            ctx.globalAlpha = 1;
+        }
+        ctx.textAlign = "left";
+    }
+
+    // Level complete overlay with score
+    if (state === "level_complete") {
+        ctx.globalAlpha = Math.min(.6, stateT*.4);
+        ctx.fillStyle = "#000"; ctx.fillRect(0,0,W,H);
+        ctx.globalAlpha = Math.min(1, stateT*2);
+
+        ctx.fillStyle = "#ffd700"; ctx.font = "bold 36px monospace"; ctx.textAlign = "center";
+        ctx.fillText("LEVEL CLEAR!", W/2, H/2 - 70);
+
+        const sc = calcScore();
+        const grade = getGrade(sc.total);
+        const gradeCol = grade==="S"?"#ffd700":grade==="A"?"#00ff44":grade==="B"?"#44aaff":"#aaa";
+
+        ctx.font = "16px monospace";
+        ctx.fillStyle = "#0f4";
+        let sy = H/2 - 30;
+        ctx.fillText(`Base: ${sc.base}`, W/2, sy); sy += 22;
+        ctx.fillStyle = sc.flipBonus > 0 ? "#ff0" : "#666";
+        ctx.fillText(`Flip Bonus: ${sc.flipBonus}`, W/2, sy); sy += 22;
+        ctx.fillStyle = sc.timeBonus > 0 ? "#ff0" : "#666";
+        ctx.fillText(`Time Bonus: ${sc.timeBonus}`, W/2, sy); sy += 22;
+        ctx.fillStyle = sc.deathBonus > 0 ? "#ff0" : "#666";
+        ctx.fillText(`No-Death Bonus: ${sc.deathBonus}`, W/2, sy); sy += 30;
+
+        ctx.font = "bold 24px monospace";
+        ctx.fillStyle = gradeCol;
+        ctx.fillText(`GRADE: ${grade}  |  TOTAL: ${sc.total}`, W/2, sy);
+
+        ctx.fillStyle = "#888"; ctx.font = "12px monospace";
+        ctx.fillText("press any key to continue", W/2, sy + 30);
+
+        ctx.globalAlpha = 1; ctx.textAlign = "left";
+    }
+
+    // Win screen
+    if (state === "win") {
+        ctx.globalAlpha = Math.min(.7, stateT*.3);
+        ctx.fillStyle = "#000"; ctx.fillRect(0,0,W,H);
+        ctx.globalAlpha = Math.min(1, stateT);
+        ctx.fillStyle = "#ffd700"; ctx.font = "bold 48px monospace"; ctx.textAlign = "center";
+        ctx.fillText("YOU WIN!", W/2, H/2-60);
+        ctx.fillStyle = "#0f4"; ctx.font = "bold 20px monospace";
+        ctx.fillText(`TOTAL SCORE: ${totalScore}`, W/2, H/2 - 15);
+        ctx.fillStyle = "#fff"; ctx.font = "16px monospace";
+        const totalFlips = bestFlips.reduce((a,b)=>a+(b||0),0);
+        ctx.fillText(`Best flips across all levels: ${totalFlips}`, W/2, H/2+15);
+        ctx.fillStyle = "#888"; ctx.font = "14px monospace";
+        ctx.fillText("Press R to play again", W/2, H/2+50);
+        ctx.globalAlpha = 1; ctx.textAlign = "left";
+        if (Math.random()<.15) spawn(Math.random()*W, Math.random()*H, 2, {spread:100,vy:-50,col:`hsl(${Math.random()*360},80%,60%)`,sz:4,life:.8,grav:-100});
+    }
+
+    // Flash
+    if (flash > 0) {
+        ctx.globalAlpha = flash * .4;
+        ctx.fillStyle = isFlipped ? "#f0f" : "#0ff";
+        ctx.fillRect(0,0,W,H);
+        ctx.globalAlpha = 1;
+    }
+    if (deathFlash > 0) {
+        ctx.globalAlpha = deathFlash;
+        ctx.fillStyle = "#f00";
+        ctx.fillRect(0,0,W,H);
+        ctx.globalAlpha = 1;
+    }
+
+    // Touch buttons (render on offscreen so they go through CRT)
+    if (isTouch) renderTouchButtons(ctx);
+
+    composite();
+}
+
+function renderTouchButtons(ctx) {
+    for (const b of touchBtns) {
+        const pressed = touchActive[b.key];
+        ctx.globalAlpha = pressed ? 0.5 : 0.25;
+        ctx.fillStyle = "#00ff44";
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = "#00ff44";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.globalAlpha = pressed ? 0.9 : 0.5;
+        ctx.fillStyle = "#000";
+        ctx.font = "bold 16px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 6);
+    }
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "left";
+}
+
+function renderTitle(ctx) {
+    const titleY = 80 + Math.sin(stateT*1.5)*8;
+
+    // Cabinet header area
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, W, 40);
+    ctx.fillStyle = "#00ff44";
+    ctx.font = "bold 12px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("★ GRAVITY FLIP ARCADE ★", W/2, 28);
+
+    ctx.save();
+    ctx.translate(W/2, titleY);
+    const s = 1 + Math.sin(stateT*2)*.02;
+    ctx.scale(s, s);
+
+    // Title shadow
+    ctx.fillStyle = "#004400";
+    ctx.font = "bold 52px monospace"; ctx.textAlign = "center";
+    ctx.fillText("GRAVITY FLIP", 2, 2);
+    // Title
+    const tGrad = ctx.createLinearGradient(-200,-20,200,20);
+    tGrad.addColorStop(0,"#00ff44"); tGrad.addColorStop(.5,"#ffd700"); tGrad.addColorStop(1,"#00ff44");
+    ctx.fillStyle = tGrad;
+    ctx.fillText("GRAVITY FLIP", 0, 0);
+    ctx.restore();
+
+    // Subtitle
+    ctx.fillStyle = "#0f4"; ctx.font = "14px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("What goes up must come down... unless you flip it.", W/2, titleY + 40);
+
+    // Demo Pac-Man bouncing
+    const demoX = W/2;
+    const demoPhase = stateT % 3;
+    let demoY, demoGD;
+    if (demoPhase < 1.5) { demoY = 200 + Math.pow(demoPhase/1.5, 2) * 80; demoGD = 1; }
+    else { demoY = 280 - Math.pow((demoPhase-1.5)/1.5, 2) * 80; demoGD = -1; }
+
+    // Demo platforms (green)
+    ctx.fillStyle = "#00ff44";
+    ctx.fillRect(W/2-60, 290, 120, 4);
+    ctx.fillRect(W/2-60, 192, 120, 4);
+
+    // Demo pac-man
+    ctx.fillStyle = demoGD > 0 ? "#ffdd00" : "#ff66aa";
+    ctx.beginPath();
+    const mAng = Math.sin(stateT * 10) * 0.3;
+    ctx.moveTo(demoX, demoY);
+    ctx.arc(demoX, demoY, 12, mAng, Math.PI * 2 - mAng);
+    ctx.closePath();
+    ctx.fill();
+    // Eye
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(demoX + 3, demoY + (demoGD > 0 ? -4 : 4), 2.5, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.arc(demoX + 4, demoY + (demoGD > 0 ? -4 : 4), 1.2, 0, Math.PI*2);
+    ctx.fill();
+
+    // Flip flash
+    if (Math.abs(demoPhase - 1.5) < .1) {
+        ctx.globalAlpha = .3;
+        ctx.fillStyle = "#0ff";
+        ctx.fillRect(W/2-50, 195, 100, 95);
+        ctx.globalAlpha = 1;
+    }
+
+    // Instructions
+    ctx.fillStyle = "#0f4"; ctx.globalAlpha = .6+Math.sin(stateT*3)*.2;
+    ctx.font = "16px monospace"; ctx.textAlign = "center";
+    ctx.fillText("Press any key to start", W/2, 360);
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = "#00aa33"; ctx.font = "12px monospace";
+    ctx.fillText("ARROWS move · SPACE jump · SHIFT flip · R restart", W/2, 390);
+
+    if (isTouch) {
+        ctx.fillStyle = "#00aa33"; ctx.font = "12px monospace";
+        ctx.fillText("Touch controls enabled!", W/2, 410);
+    }
+
+    // Level count
+    ctx.fillStyle = "#0f4"; ctx.font = "bold 14px monospace";
+    ctx.fillText(`${levels.length} LEVELS · 5 PHASES · NEW MECHANICS`, W/2, 440);
+
+    ctx.textAlign = "left";
+}
+
+// ===== CRT COMPOSITE =====
+function composite() {
+    // Draw offscreen buffer to main canvas
+    $.drawImage(offC, 0, 0);
+
+    // Scanlines
+    $.fillStyle = "rgba(0,0,0,0.15)";
+    for (let y = 0; y < H; y += 2) {
+        $.fillRect(0, y, W, 1);
+    }
+
+    // Phosphor glow
+    $.globalCompositeOperation = "lighter";
+    $.globalAlpha = 0.07;
+    $.drawImage(offC, 1, 1);
+    $.globalAlpha = 1;
+    $.globalCompositeOperation = "source-over";
+
+    // Vignette
+    const vg = $.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.75);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,0.5)");
+    $.fillStyle = vg;
+    $.fillRect(0, 0, W, H);
+
+    // Cabinet bezel
+    renderBezel();
+}
+
+function renderBezel() {
+    const bw = 8; // bezel width
+
+    // Top bezel with title
+    $.fillStyle = "#1a1a1a";
+    $.fillRect(0, 0, W, bw);
+    $.fillRect(0, H - bw, W, bw);
+    $.fillRect(0, 0, bw, H);
+    $.fillRect(W - bw, 0, bw, H);
+
+    // Inner border glow
+    $.strokeStyle = "#00ff44";
+    $.lineWidth = 1;
+    $.globalAlpha = 0.3;
+    $.strokeRect(bw, bw, W - bw*2, H - bw*2);
+    $.globalAlpha = 1;
+
+    // Fake screws
+    const screwPositions = [[4,4],[W-4,4],[4,H-4],[W-4,H-4]];
+    for (const [sx,sy] of screwPositions) {
+        $.fillStyle = "#333";
+        $.beginPath();
+        $.arc(sx, sy, 3, 0, Math.PI*2);
+        $.fill();
+        $.strokeStyle = "#555";
+        $.lineWidth = 0.5;
+        $.beginPath();
+        $.moveTo(sx-2, sy-2);
+        $.lineTo(sx+2, sy+2);
+        $.stroke();
+    }
+
+    // Speaker grille (bottom bezel)
+    $.fillStyle = "#222";
+    for (let i = 0; i < 5; i++) {
+        $.fillRect(W/2 - 20 + i*8, H - 6, 4, 3);
+    }
+}
+
+// ===== GAME LOOP =====
+const TICK = 1/120;
+let acc = 0, lt = 0;
+function loop(ts) {
+    const dt = Math.min((ts-lt)/1000, .1);
+    lt = ts; acc += dt;
+    while (acc >= TICK) {
+        update(TICK);
+        for (const k in jp) delete jp[k];
+        acc -= TICK;
+    }
+    render();
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(ts => { lt = ts; requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
