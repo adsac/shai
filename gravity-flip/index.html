@@ -12,12 +12,35 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
-body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
+body { background: #000; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; height: 100dvh; position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
 canvas { display: block; border-radius: 8px; }
+#touch-controls { display: none; width: 100%; position: relative; }
+#touch-controls .tc-row { display: flex; justify-content: space-between; padding: 6px 10px 0; }
+#touch-controls .tc-btn {
+    width: 22vw; max-width: 120px; height: 14vw; max-height: 80px;
+    border: 2px solid rgba(0,255,68,0.35); border-radius: 14px;
+    background: rgba(0,255,68,0.1); color: rgba(0,255,68,0.6);
+    font: bold 5vw/1 monospace; display: flex; align-items: center; justify-content: center;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+}
+#touch-controls .tc-btn.active {
+    background: rgba(0,255,68,0.35); border-color: rgba(0,255,68,0.7);
+    color: #000; box-shadow: 0 0 15px rgba(0,255,68,0.3);
+}
+#touch-controls .tc-gap { flex: 1; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="touch-controls">
+<div class="tc-row">
+<div class="tc-btn" data-key="ArrowLeft">&#9664;</div>
+<div class="tc-btn" data-key="ArrowRight">&#9654;</div>
+<div class="tc-gap"></div>
+<div class="tc-btn" data-key="ShiftLeft">FLIP</div>
+<div class="tc-btn" data-key="Space">JUMP</div>
+</div>
+</div>
 <script>
 // ===== SETUP =====
 const C = document.getElementById("game");
@@ -35,15 +58,22 @@ const o$ = offC.getContext("2d");
 let canvasScale = 1, canvasOffX = 0, canvasOffY = 0;
 function resizeCanvas() {
     const vw = window.innerWidth, vh = window.innerHeight;
-    const s = Math.min(vw / W, vh / H);
+    // Reserve space for touch controls below canvas on touch devices
+    const controlH = isTouch ? Math.min(90, vh * 0.18) : 0;
+    const availH = vh - controlH;
+    const s = Math.min(vw / W, availH / H);
     canvasScale = s;
     C.style.width = (W * s) + "px";
     C.style.height = (H * s) + "px";
-    C.style.position = "absolute";
-    C.style.left = ((vw - W * s) / 2) + "px";
-    C.style.top = ((vh - H * s) / 2) + "px";
-    canvasOffX = parseFloat(C.style.left);
-    canvasOffY = parseFloat(C.style.top);
+    // Let flexbox handle centering, just read back position
+    C.style.position = "";
+    C.style.left = "";
+    C.style.top = "";
+    requestAnimationFrame(() => {
+        const rect = C.getBoundingClientRect();
+        canvasOffX = rect.left;
+        canvasOffY = rect.top;
+    });
 }
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
@@ -63,45 +93,7 @@ window.addEventListener("keyup", e => keys[e.code] = false);
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
-const canFullscreen = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
-// Touch buttons sized relative to canvas — large thumb targets
-const TB = 110; // button size
-const touchBtns = [
-    { id: "left",  label: "\u25C0",  x: 8,      y: H-TB-8, w: TB, h: TB, key: "ArrowLeft" },
-    { id: "right", label: "\u25B6",  x: TB+20,  y: H-TB-8, w: TB, h: TB, key: "ArrowRight" },
-    { id: "flip",  label: "FLIP",    x: W-TB*2-20, y: H-TB-8, w: TB, h: TB, key: "ShiftLeft" },
-    { id: "jump",  label: "JUMP",    x: W-TB-8,    y: H-TB-8, w: TB, h: TB, key: "Space" },
-];
 const touchActive = {};
-
-function touchToCanvas(tx, ty) {
-    return { x: (tx - canvasOffX) / canvasScale, y: (ty - canvasOffY) / canvasScale };
-}
-
-function handleTouches(e) {
-    e.preventDefault();
-    const prev = {};
-    for (const b of touchBtns) prev[b.key] = touchActive[b.key];
-    for (const b of touchBtns) touchActive[b.key] = false;
-
-    const touches = e.touches;
-    const pad = 25; // extra hit area padding
-    for (let i = 0; i < touches.length; i++) {
-        const p = touchToCanvas(touches[i].clientX, touches[i].clientY);
-        for (const b of touchBtns) {
-            if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) {
-                touchActive[b.key] = true;
-            }
-        }
-    }
-    for (const b of touchBtns) {
-        keys[b.key] = touchActive[b.key];
-        if (touchActive[b.key] && !prev[b.key]) jp[b.key] = true;
-    }
-    // any touch = "any" for title screen
-    if (e.type === "touchstart") jp._touch = true;
-}
-
 let isFullscreen = isStandalone;
 
 function goFullscreen() {
@@ -117,7 +109,6 @@ function goFullscreen() {
             setTimeout(resizeCanvas, 300);
         }).catch(()=>{});
     }
-    // iOS fallback: scroll to hide toolbar
     if (isIOS && !isStandalone) {
         window.scrollTo(0, 1);
         setTimeout(() => { window.scrollTo(0, 0); resizeCanvas(); }, 100);
@@ -125,15 +116,39 @@ function goFullscreen() {
 }
 
 if (isTouch) {
-    // Every touch on canvas tries fullscreen (browsers may only allow it on user gesture)
+    const tcDiv = document.getElementById("touch-controls");
+    tcDiv.style.display = "block";
+    const tcBtns = tcDiv.querySelectorAll(".tc-btn");
+
+    // Track touches on each button
+    tcBtns.forEach(btn => {
+        const key = btn.dataset.key;
+        btn.addEventListener("touchstart", e => {
+            e.preventDefault();
+            if (!isFullscreen && !isStandalone) goFullscreen();
+            touchActive[key] = true;
+            keys[key] = true;
+            jp[key] = true;
+            btn.classList.add("active");
+        }, { passive: false });
+        btn.addEventListener("touchend", e => {
+            e.preventDefault();
+            touchActive[key] = false;
+            keys[key] = false;
+            btn.classList.remove("active");
+        }, { passive: false });
+        btn.addEventListener("touchcancel", e => {
+            touchActive[key] = false;
+            keys[key] = false;
+            btn.classList.remove("active");
+        });
+    });
+
+    // Canvas tap for title screen "any key"
     C.addEventListener("touchstart", e => {
-        if (!isFullscreen && !isStandalone) goFullscreen();
-        handleTouches(e);
-    }, { passive: false });
-    C.addEventListener("touchmove", handleTouches, { passive: false });
-    C.addEventListener("touchend", e => {
         e.preventDefault();
-        for (const b of touchBtns) { touchActive[b.key] = false; keys[b.key] = false; }
+        if (!isFullscreen && !isStandalone) goFullscreen();
+        jp._touch = true;
     }, { passive: false });
 }
 
@@ -1600,47 +1615,7 @@ function render() {
         ctx.globalAlpha = 1;
     }
 
-    // Touch buttons (render on offscreen so they go through CRT)
-    if (isTouch) renderTouchButtons(ctx);
-
     composite();
-}
-
-function renderTouchButtons(ctx) {
-    for (const b of touchBtns) {
-        const pressed = touchActive[b.key];
-        const rd = 14;
-        // Glow behind button
-        if (pressed) {
-            ctx.shadowColor = "#00ff44";
-            ctx.shadowBlur = 20;
-        }
-        // Button fill
-        ctx.globalAlpha = pressed ? 0.6 : 0.18;
-        const bg = ctx.createLinearGradient(b.x, b.y, b.x, b.y+b.h);
-        bg.addColorStop(0, pressed ? "#44ffaa" : "#00ff44");
-        bg.addColorStop(1, pressed ? "#00cc66" : "#008822");
-        ctx.fillStyle = bg;
-        ctx.beginPath();
-        ctx.roundRect(b.x, b.y, b.w, b.h, rd);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        // Border
-        ctx.strokeStyle = "#00ff44";
-        ctx.lineWidth = pressed ? 4 : 2.5;
-        ctx.globalAlpha = pressed ? 0.9 : 0.35;
-        ctx.beginPath();
-        ctx.roundRect(b.x, b.y, b.w, b.h, rd);
-        ctx.stroke();
-        // Label
-        ctx.globalAlpha = pressed ? 1 : 0.65;
-        ctx.fillStyle = pressed ? "#000" : "#00ff44";
-        ctx.font = "bold 28px monospace";
-        ctx.textAlign = "center";
-        ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 10);
-    }
-    ctx.globalAlpha = 1;
-    ctx.textAlign = "left";
 }
 
 function renderTitle(ctx) {
