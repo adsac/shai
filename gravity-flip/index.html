@@ -6,7 +6,7 @@
 <title>GRAVITY FLIP</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #111; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+body { background: #111; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 canvas { display: block; border-radius: 12px; image-rendering: pixelated; }
 </style>
 </head>
@@ -28,7 +28,7 @@ const o$ = offC.getContext("2d");
 // ===== RESPONSIVE SIZING =====
 let canvasScale = 1, canvasOffX = 0, canvasOffY = 0;
 function resizeCanvas() {
-    const s = Math.min(innerWidth / W, innerHeight / H) * 0.95;
+    const s = Math.min(innerWidth / W, innerHeight / H);
     canvasScale = s;
     C.style.width = (W * s) + "px";
     C.style.height = (H * s) + "px";
@@ -51,10 +51,10 @@ window.addEventListener("keyup", e => keys[e.code] = false);
 // ===== TOUCH INPUT =====
 const isTouch = 'ontouchstart' in window;
 const touchBtns = [
-    { id: "left",  label: "<",    x: 20,  y: H-70, w: 60, h: 55, key: "ArrowLeft" },
-    { id: "right", label: ">",    x: 90,  y: H-70, w: 60, h: 55, key: "ArrowRight" },
-    { id: "flip",  label: "FLIP", x: W-160, y: H-70, w: 70, h: 55, key: "ShiftLeft" },
-    { id: "jump",  label: "JUMP", x: W-80, y: H-70, w: 70, h: 55, key: "Space" },
+    { id: "left",  label: "\u25C0",    x: 10,  y: H-100, w: 90, h: 90, key: "ArrowLeft" },
+    { id: "right", label: "\u25B6",    x: 110, y: H-100, w: 90, h: 90, key: "ArrowRight" },
+    { id: "flip",  label: "FLIP", x: W-210, y: H-100, w: 95, h: 90, key: "ShiftLeft" },
+    { id: "jump",  label: "JUMP", x: W-105, y: H-100, w: 95, h: 90, key: "Space" },
 ];
 const touchActive = {};
 
@@ -69,10 +69,11 @@ function handleTouches(e) {
     for (const b of touchBtns) touchActive[b.key] = false;
 
     const touches = e.touches;
+    const pad = 15; // extra hit area padding
     for (let i = 0; i < touches.length; i++) {
         const p = touchToCanvas(touches[i].clientX, touches[i].clientY);
         for (const b of touchBtns) {
-            if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
+            if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) {
                 touchActive[b.key] = true;
             }
         }
@@ -222,10 +223,10 @@ const levels = [
     platforms: [
         r(0,15,6,3), r(0,0,30,1), r(24,15,6,3),
     ],
-    spikes: [ r(6,17,18,1,"spike") ],
+    spikes: [ r(6,17,18,1,"spike"), r(10,0,4,1,"spike") ],
     movers: [
-        { x:8*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.2, phase:0 },
-        { x:16*T, y:11*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.2, phase:0.5 },
+        { x:8*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:3*T, speed:1.5, phase:0 },
+        { x:16*T, y:11*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.6, phase:0.5 },
     ],
     goal: r(27,14,1,1,"goal"),
 },
@@ -243,17 +244,17 @@ const levels = [
     goal: r(27,14,1,1,"goal"),
 },
 {
-    name: "CONVEYOR", spawn: [2,13], grav: 1, canFlip: true, parFlips: 4,
+    name: "CONVEYOR", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
     hint: "",
     platforms: [
         r(0,15,5,3), r(0,0,30,1), r(25,15,5,3),
     ],
-    spikes: [ r(5,17,20,1,"spike") ],
+    spikes: [ r(5,17,20,1,"spike"), r(12,0,3,1,"spike") ],
     movers: [
-        { x:6*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0 },
-        { x:14*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.5 },
-        { x:8*T, y:2*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.25 },
-        { x:16*T, y:2*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.75 },
+        { x:6*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:4*T, speed:1.3, phase:0 },
+        { x:14*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:4*T, speed:1.4, phase:0.5 },
+        { x:8*T, y:2*T, w:2*T, h:T, dx:1, dy:0, range:4*T, speed:1.3, phase:0.25 },
+        { x:16*T, y:2*T, w:2*T, h:T, dx:1, dy:0, range:4*T, speed:1.4, phase:0.75 },
     ],
     goal: r(27,14,1,1,"goal"),
 },
@@ -263,13 +264,13 @@ const levels = [
     platforms: [
         r(0,15,4,3), r(0,0,30,1), r(26,15,4,3),
     ],
-    spikes: [ r(4,17,22,1,"spike") ],
+    spikes: [ r(4,17,22,1,"spike"), r(8,0,3,1,"spike"), r(18,0,3,1,"spike") ],
     movers: [
-        { x:5*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.5, phase:0 },
-        { x:10*T, y:11*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.8, phase:0.2 },
-        { x:15*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.3, phase:0.4 },
-        { x:20*T, y:10*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.6, phase:0.6 },
-        { x:12*T, y:5*T, w:3*T, h:T, dx:1, dy:0, range:4*T, speed:1.0, phase:0.8 },
+        { x:5*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.8, phase:0 },
+        { x:10*T, y:11*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:2.0, phase:0.2 },
+        { x:15*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.6, phase:0.4 },
+        { x:20*T, y:10*T, w:2*T, h:T, dx:1, dy:0, range:3*T, speed:1.9, phase:0.6 },
+        { x:12*T, y:5*T, w:2*T, h:T, dx:1, dy:0, range:4*T, speed:1.3, phase:0.8 },
     ],
     goal: r(27,14,1,1,"goal"),
 },
@@ -298,8 +299,8 @@ const levels = [
         r(0,15,30,3), r(0,0,30,1),
         r(20,5,1,10),
     ],
-    spikes: [],
-    switches: [{ x:10*T, y:14*T, w:2*T, h:T, gateId:0, timer:4 }],
+    spikes: [ r(16,14,3,1,"spike") ],
+    switches: [{ x:10*T, y:14*T, w:2*T, h:T, gateId:0, timer:3.5 }],
     gates: [{ id:0, x:20*T, y:5*T, w:T, h:10*T }],
     goal: r(27,14,1,1,"goal"),
 },
@@ -310,10 +311,10 @@ const levels = [
         r(0,15,30,3), r(0,0,30,1),
         r(10,5,1,10), r(20,5,1,10),
     ],
-    spikes: [],
+    spikes: [ r(12,14,2,1,"spike") ],
     switches: [
-        { x:6*T, y:14*T, w:2*T, h:T, gateId:0, timer:5 },
-        { x:15*T, y:14*T, w:2*T, h:T, gateId:1, timer:5 },
+        { x:6*T, y:14*T, w:2*T, h:T, gateId:0, timer:4 },
+        { x:15*T, y:14*T, w:2*T, h:T, gateId:1, timer:4 },
     ],
     gates: [
         { id:0, x:10*T, y:5*T, w:T, h:10*T },
@@ -322,29 +323,29 @@ const levels = [
     goal: r(27,14,1,1,"goal"),
 },
 {
-    name: "SWITCH FLIP", spawn: [2,13], grav: 1, canFlip: true, parFlips: 4,
+    name: "SWITCH FLIP", spawn: [2,13], grav: 1, canFlip: true, parFlips: 3,
     hint: "switch on ceiling, gate on floor",
     platforms: [
         r(0,15,30,3), r(0,0,30,1),
         r(15,10,1,5),
     ],
-    spikes: [],
-    switches: [{ x:8*T, y:T, w:2*T, h:T, gateId:0, timer:5 }],
+    spikes: [ r(11,14,3,1,"spike"), r(20,0,2,1,"spike") ],
+    switches: [{ x:8*T, y:T, w:2*T, h:T, gateId:0, timer:4 }],
     gates: [{ id:0, x:15*T, y:10*T, w:T, h:5*T }],
     goal: r(27,14,1,1,"goal"),
 },
 {
-    name: "CLOCK TOWER", spawn: [2,13], grav: 1, canFlip: true, parFlips: 6,
+    name: "CLOCK TOWER", spawn: [2,13], grav: 1, canFlip: true, parFlips: 5,
     hint: "",
     platforms: [
         r(0,15,30,3), r(0,0,30,1),
         r(8,5,1,10), r(16,5,1,10), r(24,5,1,10),
     ],
-    spikes: [ r(10,14,5,1,"spike") ],
+    spikes: [ r(10,14,5,1,"spike"), r(18,0,2,1,"spike") ],
     switches: [
-        { x:4*T, y:14*T, w:2*T, h:T, gateId:0, timer:4 },
-        { x:12*T, y:14*T, w:2*T, h:T, gateId:1, timer:4 },
-        { x:20*T, y:14*T, w:2*T, h:T, gateId:2, timer:4 },
+        { x:4*T, y:14*T, w:2*T, h:T, gateId:0, timer:3 },
+        { x:12*T, y:14*T, w:2*T, h:T, gateId:1, timer:3 },
+        { x:20*T, y:14*T, w:2*T, h:T, gateId:2, timer:3 },
     ],
     gates: [
         { id:0, x:8*T, y:5*T, w:T, h:10*T },
@@ -357,18 +358,18 @@ const levels = [
     goal: r(27,14,1,1,"goal"),
 },
 {
-    name: "GAUNTLET II", spawn: [2,13], grav: 1, canFlip: true, parFlips: 8,
+    name: "GAUNTLET II", spawn: [2,13], grav: 1, canFlip: true, parFlips: 6,
     hint: "",
     platforms: [
         r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
         r(6,8,1,7), r(14,1,1,7), r(22,8,1,7),
     ],
     spikes: [
-        r(8,14,5,1,"spike"), r(16,14,5,1,"spike"),
+        r(8,14,5,1,"spike"), r(16,14,5,1,"spike"), r(3,0,3,1,"spike"),
     ],
     switches: [
-        { x:3*T, y:14*T, w:2*T, h:T, gateId:0, timer:6 },
-        { x:10*T, y:T, w:2*T, h:T, gateId:1, timer:5 },
+        { x:3*T, y:14*T, w:2*T, h:T, gateId:0, timer:4.5 },
+        { x:10*T, y:T, w:2*T, h:T, gateId:1, timer:4 },
     ],
     gates: [
         { id:0, x:6*T, y:8*T, w:T, h:7*T },
@@ -544,7 +545,7 @@ const levels = [
     goal: r(14,1,1,1,"goal"),
 },
 {
-    name: "FINALE", spawn: [2,13], grav: 1, canFlip: true, parFlips: 12,
+    name: "FINALE", spawn: [2,13], grav: 1, canFlip: true, parFlips: 10,
     hint: "the final challenge!",
     platforms: [
         r(0,15,30,3), r(0,0,30,1), r(0,0,1,18), r(29,0,1,18),
@@ -554,10 +555,11 @@ const levels = [
     spikes: [
         r(2,14,3,1,"spike"), r(8,0,3,1,"spike"),
         r(14,14,3,1,"spike"), r(20,0,3,1,"spike"),
+        r(25,14,3,1,"spike"), r(7,14,1,1,"spike"),
     ],
     switches: [
-        { x:3*T, y:14*T, w:2*T, h:T, gateId:0, timer:5 },
-        { x:15*T, y:T, w:2*T, h:T, gateId:1, timer:5 },
+        { x:3*T, y:14*T, w:2*T, h:T, gateId:0, timer:3.5 },
+        { x:15*T, y:T, w:2*T, h:T, gateId:1, timer:3.5 },
     ],
     gates: [
         { id:0, x:6*T, y:6*T, w:T, h:4*T },
@@ -568,8 +570,8 @@ const levels = [
         { x:19*T, y:10*T, w:5*T, h:4*T, dir:1, lockFlip:true },
     ],
     movers: [
-        { x:13*T, y:13*T, w:3*T, h:T, dx:1, dy:0, range:2*T, speed:1.3, phase:0 },
-        { x:25*T, y:5*T, w:3*T, h:T, dx:0, dy:1, range:4*T, speed:0.9, phase:0 },
+        { x:13*T, y:13*T, w:2*T, h:T, dx:1, dy:0, range:2*T, speed:1.6, phase:0 },
+        { x:25*T, y:5*T, w:2*T, h:T, dx:0, dy:1, range:4*T, speed:1.2, phase:0 },
     ],
     oneways: [
         ow(7,10,4,0.2,"up"), ow(19,5,4,0.2,"down"),
@@ -673,8 +675,10 @@ function checkOneway(delta, axis) {
     return false;
 }
 
+let lastLandTime = 0;
 function landEffect() {
-    if (Math.abs(P.vy) > 150 || (!P.grounded)) {
+    if (Math.abs(P.vy) > 200 && gameTime - lastLandTime > 0.3) {
+        lastLandTime = gameTime;
         sLand();
         spawn(P.x+P.w/2, P.gd>0?P.y+P.h:P.y, 6, {spread:120,dirY:-P.gd*.5,col:"#0f4",sz:2,grav:300*P.gd});
         P.sx = 1.35; P.sy = .65;
@@ -784,7 +788,15 @@ function update(dt) {
     gameTime += dt;
 
     if (state === "title") {
-        if (kd("any")) { ea(); loadLvl(0); totalScore = 0; levelScores = []; }
+        if (kd("any")) {
+            ea();
+            // Request fullscreen on mobile
+            if (isTouch && document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen().catch(()=>{});
+                screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape").catch(()=>{});
+            }
+            loadLvl(0); totalScore = 0; levelScores = [];
+        }
         return;
     }
 
@@ -1406,17 +1418,25 @@ function render() {
 function renderTouchButtons(ctx) {
     for (const b of touchBtns) {
         const pressed = touchActive[b.key];
-        ctx.globalAlpha = pressed ? 0.5 : 0.25;
-        ctx.fillStyle = "#00ff44";
-        ctx.fillRect(b.x, b.y, b.w, b.h);
+        // Rounded button look
+        const r = 10;
+        ctx.globalAlpha = pressed ? 0.55 : 0.2;
+        ctx.fillStyle = pressed ? "#00ff88" : "#00ff44";
+        ctx.beginPath();
+        ctx.roundRect(b.x, b.y, b.w, b.h, r);
+        ctx.fill();
         ctx.strokeStyle = "#00ff44";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(b.x, b.y, b.w, b.h);
-        ctx.globalAlpha = pressed ? 0.9 : 0.5;
-        ctx.fillStyle = "#000";
-        ctx.font = "bold 16px monospace";
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = pressed ? 0.8 : 0.35;
+        ctx.beginPath();
+        ctx.roundRect(b.x, b.y, b.w, b.h, r);
+        ctx.stroke();
+        // Label
+        ctx.globalAlpha = pressed ? 0.95 : 0.6;
+        ctx.fillStyle = pressed ? "#000" : "#001a00";
+        ctx.font = "bold 24px monospace";
         ctx.textAlign = "center";
-        ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 6);
+        ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 8);
     }
     ctx.globalAlpha = 1;
     ctx.textAlign = "left";
