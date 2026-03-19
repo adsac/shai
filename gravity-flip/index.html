@@ -54,6 +54,9 @@ const offC = document.createElement("canvas");
 offC.width = W; offC.height = H;
 const o$ = offC.getContext("2d");
 
+// ===== TOUCH INPUT =====
+const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
 // ===== RESPONSIVE SIZING =====
 let canvasScale = 1, canvasOffX = 0, canvasOffY = 0;
 function resizeCanvas() {
@@ -65,10 +68,6 @@ function resizeCanvas() {
     canvasScale = s;
     C.style.width = (W * s) + "px";
     C.style.height = (H * s) + "px";
-    // Let flexbox handle centering, just read back position
-    C.style.position = "";
-    C.style.left = "";
-    C.style.top = "";
     requestAnimationFrame(() => {
         const rect = C.getBoundingClientRect();
         canvasOffX = rect.left;
@@ -88,9 +87,6 @@ window.addEventListener("keydown", e => {
     if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","ShiftLeft","ShiftRight"].includes(e.code)) e.preventDefault();
 });
 window.addEventListener("keyup", e => keys[e.code] = false);
-
-// ===== TOUCH INPUT =====
-const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
 const touchActive = {};
