@@ -6,8 +6,9 @@
 <title>GRAVITY FLIP</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #111; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
-canvas { display: block; border-radius: 12px; image-rendering: pixelated; }
+html, body { width: 100%; height: 100%; overflow: hidden; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; }
+canvas { display: block; border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -28,16 +29,21 @@ const o$ = offC.getContext("2d");
 // ===== RESPONSIVE SIZING =====
 let canvasScale = 1, canvasOffX = 0, canvasOffY = 0;
 function resizeCanvas() {
-    const s = Math.min(innerWidth / W, innerHeight / H);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const s = Math.min(vw / W, vh / H);
     canvasScale = s;
     C.style.width = (W * s) + "px";
     C.style.height = (H * s) + "px";
-    const rect = C.getBoundingClientRect();
-    canvasOffX = rect.left;
-    canvasOffY = rect.top;
+    C.style.position = "absolute";
+    C.style.left = ((vw - W * s) / 2) + "px";
+    C.style.top = ((vh - H * s) / 2) + "px";
+    canvasOffX = parseFloat(C.style.left);
+    canvasOffY = parseFloat(C.style.top);
 }
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("orientationchange", () => setTimeout(resizeCanvas, 200));
+document.addEventListener("fullscreenchange", () => setTimeout(resizeCanvas, 100));
 
 // ===== INPUT =====
 const keys = {}, jp = {};
@@ -50,11 +56,13 @@ window.addEventListener("keyup", e => keys[e.code] = false);
 
 // ===== TOUCH INPUT =====
 const isTouch = 'ontouchstart' in window;
+// Touch buttons sized relative to canvas — large thumb targets
+const TB = 110; // button size
 const touchBtns = [
-    { id: "left",  label: "\u25C0",    x: 10,  y: H-100, w: 90, h: 90, key: "ArrowLeft" },
-    { id: "right", label: "\u25B6",    x: 110, y: H-100, w: 90, h: 90, key: "ArrowRight" },
-    { id: "flip",  label: "FLIP", x: W-210, y: H-100, w: 95, h: 90, key: "ShiftLeft" },
-    { id: "jump",  label: "JUMP", x: W-105, y: H-100, w: 95, h: 90, key: "Space" },
+    { id: "left",  label: "\u25C0",  x: 8,      y: H-TB-8, w: TB, h: TB, key: "ArrowLeft" },
+    { id: "right", label: "\u25B6",  x: TB+20,  y: H-TB-8, w: TB, h: TB, key: "ArrowRight" },
+    { id: "flip",  label: "FLIP",    x: W-TB*2-20, y: H-TB-8, w: TB, h: TB, key: "ShiftLeft" },
+    { id: "jump",  label: "JUMP",    x: W-TB-8,    y: H-TB-8, w: TB, h: TB, key: "Space" },
 ];
 const touchActive = {};
 
@@ -69,7 +77,7 @@ function handleTouches(e) {
     for (const b of touchBtns) touchActive[b.key] = false;
 
     const touches = e.touches;
-    const pad = 15; // extra hit area padding
+    const pad = 25; // extra hit area padding
     for (let i = 0; i < touches.length; i++) {
         const p = touchToCanvas(touches[i].clientX, touches[i].clientY);
         for (const b of touchBtns) {
@@ -148,6 +156,18 @@ const updateParts = dt => {
     }
     if (parts.length>400) parts.length=400;
 };
+
+// ===== BACKGROUND STARS =====
+const bgStars = Array.from({length:120}, () => ({
+    x: Math.random()*W, y: Math.random()*H,
+    sz: .5+Math.random()*2, spd: .3+Math.random()*1.5, hue: Math.random()*60+100
+}));
+// Floating ambient particles
+const ambParts = Array.from({length:30}, () => ({
+    x: Math.random()*W, y: Math.random()*H,
+    vx: (Math.random()-.5)*8, vy: (Math.random()-.5)*8,
+    sz: 1+Math.random()*2, life: Math.random(), hue: Math.random()*360
+}));
 
 // ===== LEVEL BUILDER =====
 const r = (gx,gy,gw,gh,tp="solid") => ({x:gx*T,y:gy*T,w:gw*T,h:gh*T,type:tp});
@@ -954,310 +974,439 @@ function update(dt) {
 }
 
 // ===== RENDER (to off-screen buffer) =====
-function render() {
-    const ctx = o$; // Render to offscreen buffer
-    const lv = levels[lvlIdx] || levels[0];
-
-    // Black background
-    ctx.fillStyle = "#000";
+function drawBg(ctx) {
+    // Deep space gradient
+    const isFlipped = P.gd < 0;
+    const g = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.7);
+    g.addColorStop(0, isFlipped ? "#0d0018" : "#000810");
+    g.addColorStop(1, "#000");
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
-    // Dot-matrix grid
-    ctx.fillStyle = "rgba(0,255,68,0.04)";
+    // Animated stars
+    for (const s of bgStars) {
+        const twinkle = Math.sin(gameTime * s.spd * 2 + s.x * 0.3) * 0.4 + 0.6;
+        ctx.globalAlpha = twinkle * 0.7;
+        ctx.fillStyle = `hsl(${s.hue},40%,80%)`;
+        ctx.fillRect(s.x, s.y, s.sz, s.sz);
+        // Glow for bigger stars
+        if (s.sz > 1.5) {
+            ctx.globalAlpha = twinkle * 0.15;
+            ctx.fillRect(s.x - 1, s.y - 1, s.sz + 2, s.sz + 2);
+        }
+    }
+    ctx.globalAlpha = 1;
+
+    // Floating ambient particles
+    for (const p of ambParts) {
+        p.x += p.vx * 0.016; p.y += p.vy * 0.016;
+        if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+        if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+        p.life += 0.005;
+        const a = Math.sin(p.life * 3) * 0.15 + 0.05;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = `hsl(${p.hue},70%,60%)`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.sz, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Dot-matrix grid (subtle)
+    ctx.fillStyle = isFlipped ? "rgba(255,100,200,0.02)" : "rgba(0,255,68,0.025)";
     for (let x = 0; x < W; x += 6) {
         for (let y = 0; y < H; y += 6) {
             ctx.fillRect(x, y, 1, 1);
         }
     }
+}
+
+function render() {
+    const ctx = o$;
+    const lv = levels[lvlIdx] || levels[0];
+
+    drawBg(ctx);
 
     if (state === "title") { renderTitle(ctx); composite(); return; }
 
-    // === Level rendering ===
     const isFlipped = P.gd < 0;
 
-    // Gravity zones (rendered behind everything)
+    // Gravity zones with animated energy field
     const gz = lv.gzones || [];
     for (const z of gz) {
         const isUp = z.dir === -1;
-        ctx.fillStyle = isUp ? "rgba(128,0,255,0.12)" : "rgba(255,200,0,0.12)";
-        ctx.fillRect(z.x, z.y, z.w, z.h);
-        // Border
-        ctx.strokeStyle = isUp ? "rgba(128,0,255,0.4)" : "rgba(255,200,0,0.4)";
+        const zCol = isUp ? [128,0,255] : [255,200,0];
+
+        // Animated energy fill
+        for (let sy = z.y; sy < z.y + z.h; sy += 4) {
+            const wave = Math.sin(gameTime * 4 + sy * 0.05) * 0.05 + 0.08;
+            ctx.fillStyle = `rgba(${zCol[0]},${zCol[1]},${zCol[2]},${wave})`;
+            ctx.fillRect(z.x, sy, z.w, 3);
+        }
+        // Glowing border
+        ctx.shadowColor = isUp ? "#8000ff" : "#ffcc00";
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = isUp ? "rgba(160,60,255,0.6)" : "rgba(255,220,0,0.6)";
         ctx.lineWidth = 2;
         ctx.strokeRect(z.x, z.y, z.w, z.h);
-        // Direction arrows
-        ctx.fillStyle = isUp ? "rgba(180,80,255,0.3)" : "rgba(255,220,0,0.3)";
+        ctx.shadowBlur = 0;
+        // Direction arrows with glow
+        ctx.fillStyle = isUp ? "rgba(200,120,255,0.5)" : "rgba(255,230,50,0.5)";
         const arrowDir = isUp ? -1 : 1;
         for (let ax = z.x + 14; ax < z.x + z.w - 10; ax += 28) {
             for (let ay = z.y + 14; ay < z.y + z.h - 10; ay += 28) {
-                const bob = Math.sin(gameTime * 3 + ax * 0.1) * 3;
+                const bob = Math.sin(gameTime * 3 + ax * 0.1) * 4;
                 ctx.beginPath();
-                ctx.moveTo(ax, ay + arrowDir * 6 + bob);
-                ctx.lineTo(ax - 5, ay - arrowDir * 4 + bob);
-                ctx.lineTo(ax + 5, ay - arrowDir * 4 + bob);
+                ctx.moveTo(ax, ay + arrowDir * 7 + bob);
+                ctx.lineTo(ax - 6, ay - arrowDir * 5 + bob);
+                ctx.lineTo(ax + 6, ay - arrowDir * 5 + bob);
                 ctx.fill();
             }
         }
-        // Lock indicator
         if (z.lockFlip) {
-            ctx.fillStyle = isUp ? "rgba(180,80,255,0.5)" : "rgba(255,220,0,0.5)";
-            ctx.font = "bold 10px monospace";
+            ctx.fillStyle = isUp ? "rgba(200,120,255,0.7)" : "rgba(255,230,50,0.7)";
+            ctx.font = "bold 11px monospace";
             ctx.textAlign = "center";
-            ctx.fillText("LOCKED", z.x + z.w/2, z.y + z.h/2);
+            ctx.fillText("\u{1F512} LOCKED", z.x + z.w/2, z.y + z.h/2 + 4);
         }
     }
 
-    // Platforms - bright green blocks
+    // Platforms with neon glow
     for (const p of lv.platforms) {
         const isWall = p.h > p.w * 1.5;
-        const col = isWall ? "#0066ff" : "#00ff44";
-        const darkCol = isWall ? "#0044aa" : "#00bb33";
+        const col = isWall ? "#2266ff" : "#00ff55";
+        const glowCol = isWall ? "#0044ff" : "#00ff44";
 
-        // 2px black outline
+        // Neon glow
+        ctx.shadowColor = glowCol;
+        ctx.shadowBlur = 8;
         ctx.fillStyle = "#000";
-        ctx.fillRect(p.x-1, p.y-1, p.w+2, p.h+2);
-        // Body
-        ctx.fillStyle = col;
         ctx.fillRect(p.x, p.y, p.w, p.h);
-        // Darker border
-        ctx.fillStyle = darkCol;
+        ctx.shadowBlur = 0;
+
+        // Body with gradient
+        const pg = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        pg.addColorStop(0, col);
+        pg.addColorStop(0.5, isWall ? "#1144aa" : "#00cc44");
+        pg.addColorStop(1, isWall ? "#003388" : "#009933");
+        ctx.fillStyle = pg;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+
+        // Top edge highlight
+        ctx.fillStyle = isWall ? "#66aaff" : "#66ffaa";
         ctx.fillRect(p.x, p.y, p.w, 2);
+        // Bottom edge shadow
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
         ctx.fillRect(p.x, p.y+p.h-2, p.w, 2);
-        ctx.fillRect(p.x, p.y, 2, p.h);
-        ctx.fillRect(p.x+p.w-2, p.y, 2, p.h);
-        // 4x4 tile pattern
-        ctx.fillStyle = "rgba(0,0,0,0.1)";
-        for (let tx = p.x; tx < p.x + p.w; tx += 8) {
-            for (let ty = p.y; ty < p.y + p.h; ty += 8) {
-                if ((Math.floor(tx/8) + Math.floor(ty/8)) % 2 === 0) {
-                    ctx.fillRect(tx, ty, 4, 4);
-                }
-            }
+        // Side edges
+        ctx.fillStyle = isWall ? "#4488dd" : "#44dd88";
+        ctx.fillRect(p.x, p.y, 1, p.h);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(p.x+p.w-1, p.y, 1, p.h);
+
+        // Tile grid pattern
+        ctx.strokeStyle = "rgba(0,0,0,0.08)";
+        ctx.lineWidth = 1;
+        for (let tx = p.x + T; tx < p.x + p.w; tx += T) {
+            ctx.beginPath(); ctx.moveTo(tx, p.y); ctx.lineTo(tx, p.y+p.h); ctx.stroke();
+        }
+        for (let ty = p.y + T; ty < p.y + p.h; ty += T) {
+            ctx.beginPath(); ctx.moveTo(p.x, ty); ctx.lineTo(p.x+p.w, ty); ctx.stroke();
         }
     }
 
-    // Moving platforms
+    // Moving platforms with glow trail
     const mv = lv.movers || [];
     for (let i = 0; i < mv.length; i++) {
         const m = mv[i];
         const mp = moverPos[i];
+        // Motion trail
+        ctx.fillStyle = "rgba(0,255,180,0.06)";
+        ctx.fillRect(Math.min(mp.x, mp.prevX)-2, Math.min(mp.y, mp.prevY)-2,
+            Math.abs(mp.x-mp.prevX)+m.w+4, Math.abs(mp.y-mp.prevY)+m.h+4);
+        // Glow
+        ctx.shadowColor = "#00ffaa";
+        ctx.shadowBlur = 10;
         ctx.fillStyle = "#000";
-        ctx.fillRect(mp.x-1, mp.y-1, m.w+2, m.h+2);
-        ctx.fillStyle = "#00ff88";
         ctx.fillRect(mp.x, mp.y, m.w, m.h);
-        ctx.fillStyle = "#00cc66";
+        ctx.shadowBlur = 0;
+        // Body
+        const mg = ctx.createLinearGradient(mp.x, mp.y, mp.x, mp.y + m.h);
+        mg.addColorStop(0, "#00ffaa");
+        mg.addColorStop(1, "#00aa66");
+        ctx.fillStyle = mg;
+        ctx.fillRect(mp.x, mp.y, m.w, m.h);
+        // Highlight
+        ctx.fillStyle = "#88ffd4";
         ctx.fillRect(mp.x, mp.y, m.w, 2);
-        ctx.fillRect(mp.x, mp.y+m.h-2, m.w, 2);
-        // Arrow indicators
-        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        // Chevrons showing direction
+        ctx.fillStyle = "rgba(0,0,0,0.15)";
         if (m.dx) {
-            ctx.fillRect(mp.x + m.w/2 - 4, mp.y + m.h/2 - 1, 8, 2);
+            for (let cx = mp.x+8; cx < mp.x+m.w-4; cx += 12) {
+                ctx.beginPath(); ctx.moveTo(cx, mp.y+3); ctx.lineTo(cx+5, mp.y+m.h/2); ctx.lineTo(cx, mp.y+m.h-3); ctx.fill();
+            }
         }
         if (m.dy) {
-            ctx.fillRect(mp.x + m.w/2 - 1, mp.y + m.h/2 - 4, 2, 8);
+            for (let cy = mp.y+8; cy < mp.y+m.h-4; cy += 12) {
+                ctx.beginPath(); ctx.moveTo(mp.x+3, cy); ctx.lineTo(mp.x+m.w/2, cy+5); ctx.lineTo(mp.x+m.w-3, cy); ctx.fill();
+            }
         }
     }
 
-    // Gates
+    // Gates with energy field effect
     const gt = lv.gates || [];
     for (let i = 0; i < gt.length; i++) {
         const g = gt[i];
         if (gateOpen[i]) {
-            // Blink if about to close
             const sw = lv.switches || [];
             let timeLeft = 99;
             for (let j = 0; j < sw.length; j++) {
                 if (sw[j].gateId === g.id) timeLeft = Math.min(timeLeft, switchTimers[j]);
             }
-            if (timeLeft < 1 && Math.sin(gameTime * 12) > 0) {
-                ctx.fillStyle = "rgba(255,100,100,0.15)";
-                ctx.fillRect(g.x, g.y, g.w, g.h);
-            }
-            // Open gate outline
-            ctx.strokeStyle = "rgba(255,100,100,0.2)";
+            // Fading hologram when open
+            const fade = timeLeft < 1 ? (Math.sin(gameTime * 16) * 0.3 + 0.3) : 0.08;
+            ctx.fillStyle = `rgba(255,80,80,${fade})`;
+            ctx.fillRect(g.x, g.y, g.w, g.h);
+            ctx.strokeStyle = `rgba(255,80,80,${fade + 0.1})`;
             ctx.lineWidth = 1;
-            ctx.setLineDash([4,4]);
+            ctx.setLineDash([3,3]);
             ctx.strokeRect(g.x, g.y, g.w, g.h);
             ctx.setLineDash([]);
         } else {
+            // Solid glowing gate
+            ctx.shadowColor = "#ff2222";
+            ctx.shadowBlur = 8;
             ctx.fillStyle = "#000";
-            ctx.fillRect(g.x-1, g.y-1, g.w+2, g.h+2);
-            ctx.fillStyle = "#ff4444";
             ctx.fillRect(g.x, g.y, g.w, g.h);
-            ctx.fillStyle = "#cc2222";
-            ctx.fillRect(g.x, g.y, g.w, 2);
-            ctx.fillRect(g.x, g.y+g.h-2, g.w, 2);
-            // Crosshatch
-            ctx.strokeStyle = "rgba(0,0,0,0.2)";
+            ctx.shadowBlur = 0;
+            const gg = ctx.createLinearGradient(g.x, g.y, g.x + g.w, g.y);
+            gg.addColorStop(0, "#ff3333");
+            gg.addColorStop(0.5, "#ff6644");
+            gg.addColorStop(1, "#ff3333");
+            ctx.fillStyle = gg;
+            ctx.fillRect(g.x, g.y, g.w, g.h);
+            // Animated energy lines
+            ctx.strokeStyle = "rgba(255,255,100,0.2)";
             ctx.lineWidth = 1;
-            for (let dy = 0; dy < g.h; dy += 6) {
-                ctx.beginPath();
-                ctx.moveTo(g.x, g.y + dy);
-                ctx.lineTo(g.x + g.w, g.y + dy);
-                ctx.stroke();
+            for (let dy = (gameTime * 30) % 8; dy < g.h; dy += 8) {
+                ctx.beginPath(); ctx.moveTo(g.x, g.y+dy); ctx.lineTo(g.x+g.w, g.y+dy); ctx.stroke();
             }
         }
     }
 
-    // Switches
+    // Switches with glow
     const sw = lv.switches || [];
     for (let i = 0; i < sw.length; i++) {
         const s = sw[i];
         const active = switchTimers[i] > 0;
+        // Glow
+        if (active) {
+            ctx.shadowColor = "#00ff44";
+            ctx.shadowBlur = 15;
+        }
         ctx.fillStyle = "#000";
         ctx.fillRect(s.x-1, s.y-1, s.w+2, s.h+2);
-        ctx.fillStyle = active ? "#00ff44" : "#886600";
+        const sg = ctx.createLinearGradient(s.x, s.y, s.x, s.y+s.h);
+        sg.addColorStop(0, active ? "#00ff66" : "#997700");
+        sg.addColorStop(1, active ? "#00aa44" : "#664400");
+        ctx.fillStyle = sg;
         ctx.fillRect(s.x, s.y, s.w, s.h);
+        ctx.shadowBlur = 0;
+        // Pulsing ring when active
         if (active) {
-            ctx.fillStyle = "rgba(0,255,68,0.3)";
-            ctx.fillRect(s.x-3, s.y-3, s.w+6, s.h+6);
+            ctx.strokeStyle = `rgba(0,255,68,${0.3+Math.sin(gameTime*8)*0.2})`;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(s.x-4, s.y-4, s.w+8, s.h+8);
         }
-        // Arrow/indicator
-        ctx.fillStyle = active ? "#000" : "#aa8800";
-        ctx.font = "bold 10px monospace";
+        // Label
+        ctx.fillStyle = active ? "#000" : "#ffcc00";
+        ctx.font = "bold 11px monospace";
         ctx.textAlign = "center";
         ctx.fillText(active ? "ON" : "SW", s.x + s.w/2, s.y + s.h/2 + 4);
     }
 
-    // One-way platforms
+    // One-way platforms with glow
     const ows = lv.oneways || [];
     for (const ow of ows) {
+        const yPos = ow.dir === "up" ? ow.y : ow.y + ow.h;
+        // Glow line
+        ctx.shadowColor = "#00ff88";
+        ctx.shadowBlur = 6;
         ctx.strokeStyle = "#00ff88";
         ctx.lineWidth = 3;
-        ctx.setLineDash([6, 4]);
-        const yPos = ow.dir === "up" ? ow.y : ow.y + ow.h;
+        ctx.setLineDash([8, 5]);
         ctx.beginPath();
         ctx.moveTo(ow.x, yPos);
         ctx.lineTo(ow.x + ow.w, yPos);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Arrow indicators
+        ctx.shadowBlur = 0;
+        // Animated arrows
         ctx.fillStyle = "#00ff88";
         const arrowDir = ow.dir === "up" ? -1 : 1;
-        for (let ax = ow.x + 10; ax < ow.x + ow.w; ax += 20) {
+        const arrowOff = Math.sin(gameTime * 3) * 2;
+        for (let ax = ow.x + 14; ax < ow.x + ow.w; ax += 24) {
             ctx.beginPath();
-            ctx.moveTo(ax, yPos + arrowDir * 8);
-            ctx.lineTo(ax - 4, yPos + arrowDir * 2);
-            ctx.lineTo(ax + 4, yPos + arrowDir * 2);
+            ctx.moveTo(ax, yPos + arrowDir * 10 + arrowOff);
+            ctx.lineTo(ax - 5, yPos + arrowDir * 3 + arrowOff);
+            ctx.lineTo(ax + 5, yPos + arrowDir * 3 + arrowOff);
             ctx.fill();
         }
     }
 
-    // Spikes - blinking warning blocks with "!"
+    // Spikes - glowing danger blocks
     for (const s of lv.spikes) {
         const cols = Math.floor(s.w / T);
         for (let i = 0; i < cols; i++) {
             const sx = s.x + i * T;
-            const blink = Math.sin(gameTime * 4 * Math.PI + i) > 0;
-            // Body
+            const blink = Math.sin(gameTime * 4 * Math.PI + i * 1.5) * 0.5 + 0.5;
+            // Red glow
+            ctx.shadowColor = "#ff0000";
+            ctx.shadowBlur = 6 + blink * 6;
             ctx.fillStyle = "#000";
-            ctx.fillRect(sx-1, s.y-1, T+2, s.h+2);
-            ctx.fillStyle = blink ? "#ff2222" : "#aa0000";
             ctx.fillRect(sx, s.y, T, s.h);
-            // Yellow border
-            ctx.strokeStyle = "#ffaa00";
+            ctx.shadowBlur = 0;
+            // Body gradient
+            const spg = ctx.createLinearGradient(sx, s.y, sx, s.y+s.h);
+            spg.addColorStop(0, `rgb(${180+blink*75},0,0)`);
+            spg.addColorStop(1, `rgb(${120+blink*50},0,0)`);
+            ctx.fillStyle = spg;
+            ctx.fillRect(sx, s.y, T, s.h);
+            // Yellow/orange border
+            ctx.strokeStyle = `rgb(255,${140+blink*60},0)`;
             ctx.lineWidth = 2;
             ctx.strokeRect(sx+1, s.y+1, T-2, s.h-2);
-            // "!" symbol
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 14px monospace";
+            // Hazard stripes
+            ctx.fillStyle = `rgba(255,${180+blink*75},0,0.3)`;
+            ctx.fillRect(sx+3, s.y+3, T-6, 2);
+            ctx.fillRect(sx+3, s.y+s.h-5, T-6, 2);
+            // "!" with glow
+            ctx.fillStyle = `rgba(255,255,255,${0.7+blink*0.3})`;
+            ctx.font = "bold 16px monospace";
             ctx.textAlign = "center";
-            ctx.fillText("!", sx + T/2, s.y + s.h/2 + 5);
+            ctx.fillText("!", sx + T/2, s.y + s.h/2 + 6);
         }
     }
 
-    // Goal - rotating coin/star
-    const g = lv.goal;
+    // Goal - rotating star with big glow
+    const goal = lv.goal;
     const pulse = .5 + Math.sin(gameTime * 4) * .5;
     const starRot = gameTime * 2;
-    const xScale = Math.cos(gameTime * 3) * 0.4 + 0.6; // coin-flip X oscillation
+    const xScale = Math.cos(gameTime * 3) * 0.3 + 0.7;
 
+    // Ambient glow circle
     ctx.save();
-    ctx.translate(g.x + g.w/2, g.y + g.h/2);
+    ctx.translate(goal.x + goal.w/2, goal.y + goal.h/2);
+    const glowR = 22 + pulse * 6;
+    const gg = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
+    gg.addColorStop(0, "rgba(255,215,0,0.3)");
+    gg.addColorStop(0.5, "rgba(255,215,0,0.1)");
+    gg.addColorStop(1, "rgba(255,215,0,0)");
+    ctx.fillStyle = gg;
+    ctx.fillRect(-glowR, -glowR, glowR*2, glowR*2);
+
     ctx.rotate(starRot);
     ctx.scale(xScale, 1);
 
-    // Glow
-    ctx.globalAlpha = 0.2 + pulse * 0.15;
+    // Outer glow star
+    ctx.globalAlpha = 0.25 + pulse * 0.15;
     ctx.fillStyle = "#ff0";
     ctx.beginPath();
     for (let i = 0; i < 10; i++) {
         const ang = (i / 10) * Math.PI * 2 - Math.PI/2;
-        const rad = i % 2 === 0 ? 16 : 8;
+        const rad = i % 2 === 0 ? 18 : 9;
         if (i === 0) ctx.moveTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
         else ctx.lineTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
     }
     ctx.closePath();
     ctx.fill();
 
-    // Star body
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = "#ffd700";
+    // Star body with gradient
+    ctx.globalAlpha = 0.95;
+    const stg = ctx.createRadialGradient(0, -3, 0, 0, 0, 14);
+    stg.addColorStop(0, "#fff8e0");
+    stg.addColorStop(0.4, "#ffd700");
+    stg.addColorStop(1, "#cc9900");
+    ctx.fillStyle = stg;
     ctx.beginPath();
     for (let i = 0; i < 10; i++) {
         const ang = (i / 10) * Math.PI * 2 - Math.PI/2;
-        const rad = i % 2 === 0 ? 12 : 5;
+        const rad = i % 2 === 0 ? 13 : 5;
         if (i === 0) ctx.moveTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
         else ctx.lineTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
     }
     ctx.closePath();
     ctx.fill();
 
-    // White sparkle
-    ctx.globalAlpha = pulse * 0.8;
+    // Cross sparkle
+    ctx.globalAlpha = 0.5 + pulse * 0.5;
     ctx.fillStyle = "#fff";
+    ctx.fillRect(-1, -8, 2, 16);
+    ctx.fillRect(-8, -1, 16, 2);
+    // Diagonal sparkle
+    ctx.globalAlpha = pulse * 0.4;
+    ctx.save();
+    ctx.rotate(Math.PI/4);
     ctx.fillRect(-1, -6, 2, 12);
     ctx.fillRect(-6, -1, 12, 2);
+    ctx.restore();
 
     ctx.globalAlpha = 1;
     ctx.restore();
 
     // Goal particles
-    if (state === "playing" && Math.random() < .12) {
-        spawn(g.x+Math.random()*g.w, g.y+Math.random()*g.h, 1, {spread:30,vy:-30,col:"#ffd700",sz:2,life:.6,grav:-50});
+    if (state === "playing" && Math.random() < .15) {
+        spawn(goal.x+Math.random()*goal.w, goal.y+Math.random()*goal.h, 1, {spread:40,vy:-40,col:"#ffd700",sz:2,life:.7,grav:-60});
     }
 
-    // Trail
+    // Trail with glow
     for (let i = 0; i < trail.length; i++) {
         const t = trail[i];
-        const alpha = (i/trail.length) * .15;
+        const alpha = (i/trail.length) * .2;
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = "#ff0";
-        const s = .6 + (i/trail.length)*.4;
+        ctx.fillStyle = isFlipped ? "#ff66aa" : "#ffdd00";
+        const s = .5 + (i/trail.length)*.5;
+        ctx.shadowColor = isFlipped ? "#ff66aa" : "#ffdd00";
+        ctx.shadowBlur = 8;
         ctx.beginPath();
         ctx.arc(t.x+P.w/2, t.y+P.h/2, P.w*s/2, 0, Math.PI*2);
         ctx.fill();
     }
     ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
 
-    // Player - Pac-Man style
+    // Player - Pac-Man style with glow
     if (P.alive && !(P.invuln > 0 && Math.sin(stateT*40) > 0)) {
         const cx = P.x + P.w/2, cy = P.y + P.h/2;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.scale(P.sx, P.sy);
 
-        const radius = 11;
-        const mouthAngle = P.mouthOpen * 0.4; // 0 to 0.4 radians
-
-        // Determine facing angle
+        const radius = 12;
+        const mouthAngle = P.mouthOpen * 0.45;
         let faceAng = P.facing > 0 ? 0 : Math.PI;
-        if (P.gd < 0) faceAng = P.facing > 0 ? 0 : Math.PI; // Keep horizontal facing
 
-        // Body color
         const bodyCol = isFlipped ? "#ff66aa" : "#ffdd00";
+        const lightCol = isFlipped ? "#ffaacc" : "#ffee66";
         const darkCol = isFlipped ? "#cc4488" : "#ccaa00";
 
-        // Glow
-        ctx.globalAlpha = 0.15;
+        // Outer glow
+        ctx.shadowColor = bodyCol;
+        ctx.shadowBlur = 20;
+        ctx.globalAlpha = 0.3;
         ctx.fillStyle = bodyCol;
         ctx.beginPath();
-        ctx.arc(0, 0, radius + 4, 0, Math.PI * 2);
+        ctx.arc(0, 0, radius + 5, 0, Math.PI * 2);
         ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
 
-        // Pac-Man body with mouth
-        ctx.fillStyle = bodyCol;
+        // Pac-Man body with gradient
+        const pbg = ctx.createRadialGradient(-2, -3, 0, 0, 0, radius);
+        pbg.addColorStop(0, lightCol);
+        pbg.addColorStop(0.7, bodyCol);
+        pbg.addColorStop(1, darkCol);
+        ctx.fillStyle = pbg;
         ctx.beginPath();
         ctx.moveTo(0, 0);
         ctx.arc(0, 0, radius, faceAng + mouthAngle, faceAng + Math.PI * 2 - mouthAngle);
@@ -1269,26 +1418,39 @@ function render() {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Eye
+        // Specular highlight
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(-3, -4, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Eye with shine
         const eyeOffX = P.facing * 3;
         const eyeOffY = P.gd > 0 ? -4 : 4;
         ctx.fillStyle = "#fff";
         ctx.beginPath();
         ctx.arc(eyeOffX, eyeOffY, 3.5, 0, Math.PI * 2);
         ctx.fill();
-        // Pupil - tracks facing
-        ctx.fillStyle = "#000";
+        // Pupil
+        ctx.fillStyle = "#112";
         ctx.beginPath();
-        ctx.arc(eyeOffX + P.facing * 1.5, eyeOffY, 1.5, 0, Math.PI * 2);
+        ctx.arc(eyeOffX + P.facing * 1.5, eyeOffY, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+        // Eye shine
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(eyeOffX + P.facing * 0.5, eyeOffY - 1.5, 0.8, 0, Math.PI * 2);
         ctx.fill();
 
         // Flipped: distressed eyebrow
         if (isFlipped) {
             ctx.strokeStyle = "#cc4488";
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.5;
             ctx.beginPath();
-            ctx.moveTo(eyeOffX - 4, eyeOffY - (P.gd > 0 ? 6 : -6));
-            ctx.lineTo(eyeOffX + 4, eyeOffY - (P.gd > 0 ? 4 : -4));
+            ctx.moveTo(eyeOffX - 5, eyeOffY - (P.gd > 0 ? 7 : -7));
+            ctx.lineTo(eyeOffX + 5, eyeOffY - (P.gd > 0 ? 4 : -4));
             ctx.stroke();
         }
 
@@ -1418,82 +1580,111 @@ function render() {
 function renderTouchButtons(ctx) {
     for (const b of touchBtns) {
         const pressed = touchActive[b.key];
-        // Rounded button look
-        const r = 10;
-        ctx.globalAlpha = pressed ? 0.55 : 0.2;
-        ctx.fillStyle = pressed ? "#00ff88" : "#00ff44";
+        const rd = 14;
+        // Glow behind button
+        if (pressed) {
+            ctx.shadowColor = "#00ff44";
+            ctx.shadowBlur = 20;
+        }
+        // Button fill
+        ctx.globalAlpha = pressed ? 0.6 : 0.18;
+        const bg = ctx.createLinearGradient(b.x, b.y, b.x, b.y+b.h);
+        bg.addColorStop(0, pressed ? "#44ffaa" : "#00ff44");
+        bg.addColorStop(1, pressed ? "#00cc66" : "#008822");
+        ctx.fillStyle = bg;
         ctx.beginPath();
-        ctx.roundRect(b.x, b.y, b.w, b.h, r);
+        ctx.roundRect(b.x, b.y, b.w, b.h, rd);
         ctx.fill();
+        ctx.shadowBlur = 0;
+        // Border
         ctx.strokeStyle = "#00ff44";
-        ctx.lineWidth = 3;
-        ctx.globalAlpha = pressed ? 0.8 : 0.35;
+        ctx.lineWidth = pressed ? 4 : 2.5;
+        ctx.globalAlpha = pressed ? 0.9 : 0.35;
         ctx.beginPath();
-        ctx.roundRect(b.x, b.y, b.w, b.h, r);
+        ctx.roundRect(b.x, b.y, b.w, b.h, rd);
         ctx.stroke();
         // Label
-        ctx.globalAlpha = pressed ? 0.95 : 0.6;
-        ctx.fillStyle = pressed ? "#000" : "#001a00";
-        ctx.font = "bold 24px monospace";
+        ctx.globalAlpha = pressed ? 1 : 0.65;
+        ctx.fillStyle = pressed ? "#000" : "#00ff44";
+        ctx.font = "bold 28px monospace";
         ctx.textAlign = "center";
-        ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 8);
+        ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 10);
     }
     ctx.globalAlpha = 1;
     ctx.textAlign = "left";
 }
 
 function renderTitle(ctx) {
-    const titleY = 80 + Math.sin(stateT*1.5)*8;
+    const titleY = 85 + Math.sin(stateT*1.5)*6;
 
-    // Cabinet header area
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, W, 40);
-    ctx.fillStyle = "#00ff44";
-    ctx.font = "bold 12px monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("★ GRAVITY FLIP ARCADE ★", W/2, 28);
+    // Animated background energy
+    for (let i = 0; i < 3; i++) {
+        const wave = Math.sin(stateT * 0.5 + i * 2) * 0.03 + 0.04;
+        ctx.fillStyle = `rgba(0,255,68,${wave})`;
+        const wy = Math.sin(stateT * 0.3 + i) * 50 + H/2;
+        ctx.fillRect(0, wy - 30, W, 60);
+    }
 
     ctx.save();
     ctx.translate(W/2, titleY);
-    const s = 1 + Math.sin(stateT*2)*.02;
+    const s = 1 + Math.sin(stateT*2)*.03;
     ctx.scale(s, s);
 
-    // Title shadow
-    ctx.fillStyle = "#004400";
-    ctx.font = "bold 52px monospace"; ctx.textAlign = "center";
-    ctx.fillText("GRAVITY FLIP", 2, 2);
-    // Title
-    const tGrad = ctx.createLinearGradient(-200,-20,200,20);
-    tGrad.addColorStop(0,"#00ff44"); tGrad.addColorStop(.5,"#ffd700"); tGrad.addColorStop(1,"#00ff44");
+    // Title glow
+    ctx.shadowColor = "#00ff44";
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = "#003300";
+    ctx.font = "bold 54px monospace"; ctx.textAlign = "center";
+    ctx.fillText("GRAVITY FLIP", 0, 0);
+    ctx.shadowBlur = 15;
+
+    // Title with animated gradient
+    const tGrad = ctx.createLinearGradient(-220,-20,220,20);
+    const hueShift = Math.sin(stateT * 0.5) * 0.2;
+    tGrad.addColorStop(0, "#00ff44");
+    tGrad.addColorStop(0.3 + hueShift, "#44ffaa");
+    tGrad.addColorStop(0.5, "#ffd700");
+    tGrad.addColorStop(0.7 - hueShift, "#44ffaa");
+    tGrad.addColorStop(1, "#00ff44");
     ctx.fillStyle = tGrad;
     ctx.fillText("GRAVITY FLIP", 0, 0);
+    ctx.shadowBlur = 0;
     ctx.restore();
 
-    // Subtitle
-    ctx.fillStyle = "#0f4"; ctx.font = "14px monospace";
+    // Subtitle with typewriter effect
+    ctx.fillStyle = "#00cc44"; ctx.font = "14px monospace";
     ctx.textAlign = "center";
-    ctx.fillText("What goes up must come down... unless you flip it.", W/2, titleY + 40);
+    const sub = "What goes up must come down... unless you flip it.";
+    const chars = Math.min(sub.length, Math.floor(stateT * 20));
+    ctx.fillText(sub.substring(0, chars), W/2, titleY + 38);
 
-    // Demo Pac-Man bouncing
+    // Demo Pac-Man
     const demoX = W/2;
     const demoPhase = stateT % 3;
     let demoY, demoGD;
-    if (demoPhase < 1.5) { demoY = 200 + Math.pow(demoPhase/1.5, 2) * 80; demoGD = 1; }
-    else { demoY = 280 - Math.pow((demoPhase-1.5)/1.5, 2) * 80; demoGD = -1; }
+    if (demoPhase < 1.5) { demoY = 210 + Math.pow(demoPhase/1.5, 2) * 70; demoGD = 1; }
+    else { demoY = 280 - Math.pow((demoPhase-1.5)/1.5, 2) * 70; demoGD = -1; }
 
-    // Demo platforms (green)
+    // Demo platforms with glow
+    ctx.shadowColor = "#00ff44";
+    ctx.shadowBlur = 8;
     ctx.fillStyle = "#00ff44";
-    ctx.fillRect(W/2-60, 290, 120, 4);
-    ctx.fillRect(W/2-60, 192, 120, 4);
+    ctx.fillRect(W/2-60, 288, 120, 4);
+    ctx.fillRect(W/2-60, 200, 120, 4);
+    ctx.shadowBlur = 0;
 
-    // Demo pac-man
-    ctx.fillStyle = demoGD > 0 ? "#ffdd00" : "#ff66aa";
+    // Demo pac-man with glow
+    const demoCol = demoGD > 0 ? "#ffdd00" : "#ff66aa";
+    ctx.shadowColor = demoCol;
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = demoCol;
     ctx.beginPath();
     const mAng = Math.sin(stateT * 10) * 0.3;
     ctx.moveTo(demoX, demoY);
-    ctx.arc(demoX, demoY, 12, mAng, Math.PI * 2 - mAng);
+    ctx.arc(demoX, demoY, 13, mAng, Math.PI * 2 - mAng);
     ctx.closePath();
     ctx.fill();
+    ctx.shadowBlur = 0;
     // Eye
     ctx.fillStyle = "#fff";
     ctx.beginPath();
@@ -1504,31 +1695,38 @@ function renderTitle(ctx) {
     ctx.arc(demoX + 4, demoY + (demoGD > 0 ? -4 : 4), 1.2, 0, Math.PI*2);
     ctx.fill();
 
-    // Flip flash
+    // Flip flash with particle burst
     if (Math.abs(demoPhase - 1.5) < .1) {
         ctx.globalAlpha = .3;
-        ctx.fillStyle = "#0ff";
-        ctx.fillRect(W/2-50, 195, 100, 95);
+        const fg = ctx.createRadialGradient(demoX, 240, 0, demoX, 240, 60);
+        fg.addColorStop(0, "#0ff");
+        fg.addColorStop(1, "rgba(0,255,255,0)");
+        ctx.fillStyle = fg;
+        ctx.fillRect(W/2-60, 195, 120, 95);
         ctx.globalAlpha = 1;
     }
 
     // Instructions
-    ctx.fillStyle = "#0f4"; ctx.globalAlpha = .6+Math.sin(stateT*3)*.2;
-    ctx.font = "16px monospace"; ctx.textAlign = "center";
-    ctx.fillText("Press any key to start", W/2, 360);
+    ctx.shadowColor = "#00ff44";
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = "#00ff44"; ctx.globalAlpha = .6+Math.sin(stateT*3)*.3;
+    ctx.font = "bold 18px monospace"; ctx.textAlign = "center";
+    ctx.fillText(isTouch ? "Tap to start" : "Press any key to start", W/2, 340);
+    ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
 
     ctx.fillStyle = "#00aa33"; ctx.font = "12px monospace";
-    ctx.fillText("ARROWS move · SPACE jump · SHIFT flip · R restart", W/2, 390);
-
-    if (isTouch) {
-        ctx.fillStyle = "#00aa33"; ctx.font = "12px monospace";
-        ctx.fillText("Touch controls enabled!", W/2, 410);
+    if (!isTouch) {
+        ctx.fillText("ARROWS move \u00B7 SPACE jump \u00B7 SHIFT flip \u00B7 R restart", W/2, 370);
     }
 
-    // Level count
+    // Level count badge
+    ctx.fillStyle = "rgba(0,255,68,0.08)";
+    ctx.beginPath();
+    ctx.roundRect(W/2 - 180, 390, 360, 30, 8);
+    ctx.fill();
     ctx.fillStyle = "#0f4"; ctx.font = "bold 14px monospace";
-    ctx.fillText(`${levels.length} LEVELS · 5 PHASES · NEW MECHANICS`, W/2, 440);
+    ctx.fillText(`${levels.length} LEVELS \u00B7 5 PHASES \u00B7 NEW MECHANICS`, W/2, 410);
 
     ctx.textAlign = "left";
 }
@@ -1538,23 +1736,40 @@ function composite() {
     // Draw offscreen buffer to main canvas
     $.drawImage(offC, 0, 0);
 
-    // Scanlines
-    $.fillStyle = "rgba(0,0,0,0.15)";
+    // Phosphor glow — draw offset copies with additive blending
+    $.globalCompositeOperation = "lighter";
+    $.globalAlpha = 0.06;
+    $.drawImage(offC, 1, 0);
+    $.drawImage(offC, -1, 0);
+    $.globalAlpha = 0.04;
+    $.drawImage(offC, 0, 1);
+    $.drawImage(offC, 2, 0);
+    $.globalAlpha = 1;
+    $.globalCompositeOperation = "source-over";
+
+    // Scanlines (every 2px, subtle)
+    $.fillStyle = "rgba(0,0,0,0.12)";
     for (let y = 0; y < H; y += 2) {
         $.fillRect(0, y, W, 1);
     }
 
-    // Phosphor glow
-    $.globalCompositeOperation = "lighter";
-    $.globalAlpha = 0.07;
-    $.drawImage(offC, 1, 1);
+    // RGB sub-pixel hint (very subtle color fringing)
+    $.globalCompositeOperation = "multiply";
+    $.globalAlpha = 0.03;
+    $.fillStyle = "#ff8888";
+    $.fillRect(0, 0, W/3, H);
+    $.fillStyle = "#88ff88";
+    $.fillRect(W/3, 0, W/3, H);
+    $.fillStyle = "#8888ff";
+    $.fillRect(W*2/3, 0, W/3, H);
     $.globalAlpha = 1;
     $.globalCompositeOperation = "source-over";
 
-    // Vignette
-    const vg = $.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.75);
+    // Vignette — deeper and more dramatic
+    const vg = $.createRadialGradient(W/2, H/2, W*0.25, W/2, H/2, W*0.72);
     vg.addColorStop(0, "rgba(0,0,0,0)");
-    vg.addColorStop(1, "rgba(0,0,0,0.5)");
+    vg.addColorStop(0.7, "rgba(0,0,0,0.15)");
+    vg.addColorStop(1, "rgba(0,0,0,0.6)");
     $.fillStyle = vg;
     $.fillRect(0, 0, W, H);
 
@@ -1563,41 +1778,58 @@ function composite() {
 }
 
 function renderBezel() {
-    const bw = 8; // bezel width
+    const bw = 6;
 
-    // Top bezel with title
-    $.fillStyle = "#1a1a1a";
+    // Bezel frame with gradient
+    const bz = $.createLinearGradient(0, 0, 0, H);
+    bz.addColorStop(0, "#222");
+    bz.addColorStop(0.5, "#1a1a1a");
+    bz.addColorStop(1, "#111");
+    $.fillStyle = bz;
     $.fillRect(0, 0, W, bw);
     $.fillRect(0, H - bw, W, bw);
     $.fillRect(0, 0, bw, H);
     $.fillRect(W - bw, 0, bw, H);
 
-    // Inner border glow
+    // Inner neon border
+    $.shadowColor = "#00ff44";
+    $.shadowBlur = 4;
     $.strokeStyle = "#00ff44";
     $.lineWidth = 1;
-    $.globalAlpha = 0.3;
+    $.globalAlpha = 0.4;
     $.strokeRect(bw, bw, W - bw*2, H - bw*2);
+    $.shadowBlur = 0;
     $.globalAlpha = 1;
 
-    // Fake screws
+    // Corner screws with metallic look
     const screwPositions = [[4,4],[W-4,4],[4,H-4],[W-4,H-4]];
     for (const [sx,sy] of screwPositions) {
-        $.fillStyle = "#333";
+        const sg = $.createRadialGradient(sx-1, sy-1, 0, sx, sy, 3.5);
+        sg.addColorStop(0, "#666");
+        sg.addColorStop(0.6, "#444");
+        sg.addColorStop(1, "#222");
+        $.fillStyle = sg;
         $.beginPath();
-        $.arc(sx, sy, 3, 0, Math.PI*2);
+        $.arc(sx, sy, 3.5, 0, Math.PI*2);
         $.fill();
         $.strokeStyle = "#555";
-        $.lineWidth = 0.5;
+        $.lineWidth = 0.8;
         $.beginPath();
         $.moveTo(sx-2, sy-2);
         $.lineTo(sx+2, sy+2);
         $.stroke();
+        $.beginPath();
+        $.moveTo(sx+2, sy-2);
+        $.lineTo(sx-2, sy+2);
+        $.stroke();
     }
 
-    // Speaker grille (bottom bezel)
-    $.fillStyle = "#222";
-    for (let i = 0; i < 5; i++) {
-        $.fillRect(W/2 - 20 + i*8, H - 6, 4, 3);
+    // Speaker grille dots
+    $.fillStyle = "#1a1a1a";
+    for (let i = 0; i < 7; i++) {
+        for (let j = 0; j < 2; j++) {
+            $.fillRect(W/2 - 24 + i*8, H - 5 + j*2, 3, 1);
+        }
     }
 }
 
